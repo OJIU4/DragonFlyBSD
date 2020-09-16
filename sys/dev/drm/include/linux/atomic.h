@@ -95,9 +95,9 @@ atomic64_set(atomic64_t *v, long i)
 }
 
 static inline int
-atomic_read(atomic_t *v)
+atomic_read(const atomic_t *v)
 {
-	return atomic_load_acq_int(&v->counter);
+	return READ_ONCE(v->counter);
 }
 
 static inline int64_t
@@ -158,36 +158,36 @@ atomic_andnot(int i, atomic_t *v)
 	atomic_clear_int(&v->counter, i);
 }
 
-#define cmpxchg(ptr, old, new) ({				\
-	__typeof(*(ptr)) __ret;					\
-								\
-	CTASSERT(sizeof(__ret) == 1 || sizeof(__ret) == 2 ||	\
-	    sizeof(__ret) == 4 || sizeof(__ret) == 8);		\
-								\
-	__ret = (old);						\
-	switch (sizeof(__ret)) {				\
-	case 1:							\
-		while (!atomic_fcmpset_8((volatile int8_t *)(ptr), \
-		    (int8_t *)&__ret, (new)) && __ret == (old))	\
-			;					\
-		break;						\
-	case 2:							\
-		while (!atomic_fcmpset_16((volatile int16_t *)(ptr), \
-		    (int16_t *)&__ret, (new)) && __ret == (old)) \
-			;					\
-		break;						\
-	case 4:							\
-		while (!atomic_fcmpset_32((volatile int32_t *)(ptr), \
-		    (int32_t *)&__ret, (new)) && __ret == (old)) \
-			;					\
-		break;						\
-	case 8:							\
-		while (!atomic_fcmpset_64((volatile int64_t *)(ptr), \
-		    (int64_t *)&__ret, (new)) && __ret == (old)) \
-			;					\
-		break;						\
-	}							\
-	__ret;							\
+#define cmpxchg(ptr, old, new) ({					\
+	__typeof(*(ptr)) __ret;						\
+									\
+	CTASSERT(sizeof(__ret) == 1 || sizeof(__ret) == 2 ||		\
+	    sizeof(__ret) == 4 || sizeof(__ret) == 8);			\
+									\
+	__ret = (old);							\
+	switch (sizeof(__ret)) {					\
+	case 1:								\
+		while (!atomic_fcmpset_8((volatile int8_t *)(ptr),	\
+		    (int8_t *)&__ret, (u64)(new)) && __ret == (old))	\
+			;						\
+		break;							\
+	case 2:								\
+		while (!atomic_fcmpset_16((volatile int16_t *)(ptr),	\
+		    (int16_t *)&__ret, (u64)(new)) && __ret == (old))	\
+			;						\
+		break;							\
+	case 4:								\
+		while (!atomic_fcmpset_32((volatile int32_t *)(ptr),	\
+		    (int32_t *)&__ret, (u64)(new)) && __ret == (old))	\
+			;						\
+		break;							\
+	case 8:								\
+		while (!atomic_fcmpset_64((volatile int64_t *)(ptr),	\
+		    (int64_t *)&__ret, (u64)(new)) && __ret == (old))	\
+			;						\
+		break;							\
+	}								\
+	__ret;								\
 })
 
 #define cmpxchg_relaxed(...)	cmpxchg(__VA_ARGS__)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 François Tigeot <ftigeot@wolfpond.org>
+ * Copyright (c) 2018-2020 François Tigeot <ftigeot@wolfpond.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,7 +32,7 @@
 #include <linux/list.h>
 #include <linux/dma-mapping.h>
 #include <linux/fs.h>
-#include <linux/fence.h>
+#include <linux/dma-fence.h>
 #include <linux/wait.h>
 
 #include <linux/slab.h>
@@ -47,10 +47,10 @@ struct dma_buf_ops {
 						struct sg_table *,
 						enum dma_data_direction);
 	void (*release)(struct dma_buf *);
-	void *(*kmap)(struct dma_buf *, unsigned long);
-	void *(*kmap_atomic)(struct dma_buf *, unsigned long);
-	void (*kunmap)(struct dma_buf *, unsigned long, void *);
-	void (*kunmap_atomic)(struct dma_buf *, unsigned long, void *);
+	void *(*map)(struct dma_buf *, unsigned long);
+	void *(*map_atomic)(struct dma_buf *, unsigned long);
+	void (*unmap)(struct dma_buf *, unsigned long, void *);
+	void (*unmap_atomic)(struct dma_buf *, unsigned long, void *);
 	int (*mmap)(struct dma_buf *, struct vm_area_struct *vma);
 	void *(*vmap)(struct dma_buf *);
 	void (*vunmap)(struct dma_buf *, void *vaddr);
@@ -65,6 +65,7 @@ struct dma_buf {
 	void *priv;
 	const struct dma_buf_ops *ops;
 	size_t size;
+	struct file *file;
 };
 
 struct dma_buf_attachment {
@@ -101,6 +102,35 @@ dma_buf_attach(struct dma_buf *dmabuf, struct device *dev)
 	attach = kmalloc(sizeof(struct dma_buf_attachment), M_DRM, M_WAITOK | M_ZERO);
 
 	return attach;
+}
+
+static inline void
+get_dma_buf(struct dma_buf *dmabuf)
+{
+	fhold(dmabuf->file);
+}
+
+static inline void
+dma_buf_put(struct dma_buf *dmabuf)
+{
+	if (dmabuf == NULL)
+		return;
+
+	if (dmabuf->file == NULL)
+		return;
+
+	fdrop(dmabuf->file);
+}
+
+int dma_buf_fd(struct dma_buf *dmabuf, int flags);
+
+struct dma_buf *dma_buf_get(int fd);
+
+static inline void
+dma_buf_detach(struct dma_buf *dmabuf,
+	       struct dma_buf_attachment *dmabuf_attach)
+{
+	kprintf("dma_buf_detach: Not implemented\n");
 }
 
 #endif /* LINUX_DMA_BUF_H */

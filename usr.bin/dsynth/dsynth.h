@@ -40,8 +40,10 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/mount.h>
 #include <sys/procctl.h>
+#include <sys/resource.h>	/* setpriority() */
 #if defined(__DragonFly__)
 #include <sys/vmmeter.h>
 #endif
@@ -52,6 +54,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <fcntl.h>
+#include <fts.h>
+#include <ndbm.h>
 #include <signal.h>
 #include <poll.h>
 #include <assert.h>
@@ -159,6 +163,7 @@ typedef struct pkg {
 	int dsynth_install_flg;	/* locked with WorkerMutex	*/
 	int flags;
 	int rscan;		/* recursive scan flag (serialized use) */
+	uint32_t crc32;		/* crc of port directory tree */
 	size_t pkgfile_size;	/* size of pkgfile */
 } pkg_t;
 
@@ -500,14 +505,17 @@ extern int BuildFailCount;
 extern int BuildSkipCount;
 extern int BuildIgnoreCount;
 extern int BuildSuccessCount;
+extern int BuildMissingCount;
 extern int DynamicMaxWorkers;
 
 extern buildenv_t *BuildEnv;
 extern int WorkerProcFlags;
 extern int DebugOpt;
+extern int NiceOpt;
 extern int MaskProbeAbort;
 extern int ColorOpt;
 extern int SlowStartOpt;
+extern int OverridePkgDeleteOpt;
 extern int YesOpt;
 extern int NullStdinOpt;
 extern int DeleteObsoletePkgs;
@@ -571,6 +579,7 @@ int dlog00_fd(void);
 void addbuildenv(const char *label, const char *data, int type);
 void delbuildenv(const char *label);
 int readlogline(monitorlog_t *log, char **bufp);
+uint32_t crcDirTree(const char *path);
 
 void initbulk(void (*func)(bulk_t *bulk), int jobs);
 void queuebulk(const char *s1, const char *s2, const char *s3,
@@ -582,7 +591,8 @@ void freestrp(char **strp);
 void dupstrp(char **strp);
 int askyn(const char *ctl, ...);
 double getswappct(int *noswapp);
-FILE *dexec_open(const char **cav, int cac, pid_t *pidp, buildenv_t *xenv,
+FILE *dexec_open(const char *logid, const char **cav, int cac,
+			pid_t *pidp, buildenv_t *xenv,
 			int with_env, int with_mvars);
 int dexec_close(FILE *fp, pid_t pid);
 const char *getphasestr(worker_phase_t phase);
@@ -592,7 +602,7 @@ pkg_t *ParsePackageList(int ac, char **av, int debugstop);
 void FreePackageList(pkg_t *pkgs);
 pkg_t *GetLocalPackageList(void);
 pkg_t *GetFullPackageList(void);
-pkg_t *GetPkgPkg(pkg_t *list);
+pkg_t *GetPkgPkg(pkg_t **listp);
 
 void DoConfigure(void);
 void DoStatus(pkg_t *pkgs);
@@ -625,3 +635,6 @@ int copyfile(char *src, char *dst);
 int ipcreadmsg(int fd, wmsg_t *msg);
 int ipcwritemsg(int fd, wmsg_t *msg);
 extern void MonitorDirective(const char *datfile, const char *lkfile);
+
+uint32_t iscsi_crc32(const void *buf, size_t size);
+uint32_t iscsi_crc32_ext(const void *buf, size_t size, uint32_t ocrc);

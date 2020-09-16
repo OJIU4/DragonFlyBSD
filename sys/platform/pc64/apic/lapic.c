@@ -115,8 +115,6 @@ static const uint32_t	lapic_timer_divisors[] = {
 #define APIC_TIMER_NDIVISORS (int)(NELEM(lapic_timer_divisors))
 
 static int	lapic_use_tscdeadline = 0;
-/* The raw TSC frequency might not fit into a sysclock_t value. */
-static int	lapic_timer_tscfreq_shift;
 
 /*
  * APIC ID <-> CPU ID mapping structures.
@@ -385,6 +383,9 @@ lapic_init(boolean_t bsp)
 			if (bsp)
 				kprintf("    LAPIC disabling EOI supp\n");
 		}
+		/* (future, on KVM auto-EOI must be disabled) */
+		if (vmm_guest == VMM_GUEST_KVM)
+			temp &= ~APIC_SVR_EOI_SUPP;
 	}
 
 	/*
@@ -535,7 +536,8 @@ static uint64_t
 do_cputimer_calibration(u_int us)
 {
 	sysclock_t value;
-	sysclock_t start, end, beginning, finish;
+	sysclock_t start, end;
+	uint32_t beginning, finish;
 
 	lapic_timer_oneshot(APIC_TIMER_MAX_COUNT);
 	beginning = LAPIC_READ(ccr_timer);
@@ -546,12 +548,13 @@ do_cputimer_calibration(u_int us)
 	if (finish == 0)
 		return 0;
 	/* value is the LAPIC timer difference. */
-	value = beginning - finish;
+	value = (uint32_t)(beginning - finish);
 	/* end is the sys_cputimer difference. */
 	end -= start;
 	if (end == 0)
 		return 0;
-	value = ((uint64_t)value * sys_cputimer->freq) / end;
+	value = muldivu64(value, sys_cputimer->freq, end);
+
 	return value;
 }
 
@@ -564,14 +567,10 @@ lapic_timer_calibrate(void)
 
 	/* No need to calibrate lapic_timer, if we will use TSC Deadline mode */
 	if (lapic_use_tscdeadline) {
-		lapic_timer_tscfreq_shift = 0;
-		while ((tsc_frequency >> lapic_timer_tscfreq_shift) > INT_MAX)
-			lapic_timer_tscfreq_shift++;
-		lapic_cputimer_intr.freq =
-		    tsc_frequency >> lapic_timer_tscfreq_shift;
+		lapic_cputimer_intr.freq = tsc_frequency;
 		kprintf(
-		    "lapic: TSC Deadline Mode: shift %d, frequency %u Hz\n",
-		    lapic_timer_tscfreq_shift, lapic_cputimer_intr.freq);
+		    "lapic: TSC Deadline Mode: frequency %lu Hz\n",
+		    lapic_cputimer_intr.freq);
 		return;
 	}
 
@@ -585,7 +584,7 @@ lapic_timer_calibrate(void)
 	if (use_tsc_calibration) {
 		u_int64_t min_apic_tsc = 0, max_apic_tsc = 0;
 		u_int64_t old_tsc, new_tsc;
-		sysclock_t val;
+		uint32_t val;
 		int i;
 
 		/* warm up */
@@ -642,7 +641,7 @@ lapic_timer_calibrate(void)
 		panic("lapic: no proper timer divisor?!");
 	lapic_cputimer_intr.freq = value;
 
-	kprintf("lapic: divisor index %d, frequency %u Hz\n",
+	kprintf("lapic: divisor index %d, frequency %lu Hz\n",
 		lapic_timer_divisor_idx, lapic_cputimer_intr.freq);
 
 	if (lapic_calibrate_test > 0) {
@@ -652,7 +651,7 @@ lapic_timer_calibrate(void)
 		for (i = 1; i <= 20; i++) {
 			if (use_tsc_calibration) {
 				freq = do_tsc_calibration(i*100*1000,
-				    apic_delay_tsc);
+							  apic_delay_tsc);
 			} else {
 				freq = do_cputimer_calibration(i*100*1000);
 			}
@@ -668,9 +667,12 @@ lapic_timer_tscdlt_reload(struct cputimer_intr *cti, sysclock_t reload)
 	struct globaldata *gd = mycpu;
 	uint64_t diff, now, val;
 
-	if (reload > 1000*1000*1000)
-		reload = 1000*1000*1000;
-	diff = (uint64_t)reload * tsc_frequency / sys_cputimer->freq;
+	/*
+	 * Set maximum deadline to 60 seconds
+	 */
+	if (reload > sys_cputimer->freq * 60)
+		reload = sys_cputimer->freq * 60;
+	diff = muldivu64(reload, tsc_frequency, sys_cputimer->freq);
 	if (diff < 4)
 		diff = 4;
 	if (cpu_vendor_id == CPU_VENDOR_INTEL)
@@ -697,16 +699,20 @@ lapic_mem_timer_intr_reload(struct cputimer_intr *cti, sysclock_t reload)
 {
 	struct globaldata *gd = mycpu;
 
-	reload = (int64_t)reload * cti->freq / sys_cputimer->freq;
+	if ((ssysclock_t)reload < 0)
+		reload = 1;
+	reload = muldivu64(reload, cti->freq, sys_cputimer->freq);
 	if (reload < 2)
 		reload = 2;
+	if (reload > 0xFFFFFFFF)
+		reload = 0xFFFFFFFF;
 
 	if (gd->gd_timer_running) {
 		if (reload < LAPIC_MEM_READ(ccr_timer))
-			LAPIC_MEM_WRITE(icr_timer, reload);
+			LAPIC_MEM_WRITE(icr_timer, (uint32_t)reload);
 	} else {
 		gd->gd_timer_running = 1;
-		LAPIC_MEM_WRITE(icr_timer, reload);
+		LAPIC_MEM_WRITE(icr_timer, (uint32_t)reload);
 	}
 }
 
@@ -715,16 +721,20 @@ lapic_msr_timer_intr_reload(struct cputimer_intr *cti, sysclock_t reload)
 {
 	struct globaldata *gd = mycpu;
 
-	reload = (int64_t)reload * cti->freq / sys_cputimer->freq;
+	if ((ssysclock_t)reload < 0)
+		reload = 1;
+	reload = muldivu64(reload, cti->freq, sys_cputimer->freq);
 	if (reload < 2)
 		reload = 2;
+	if (reload > 0xFFFFFFFF)
+		reload = 0xFFFFFFFF;
 
 	if (gd->gd_timer_running) {
 		if (reload < LAPIC_MSR_READ(MSR_X2APIC_CCR_TIMER))
-			LAPIC_MSR_WRITE(MSR_X2APIC_ICR_TIMER, reload);
+			LAPIC_MSR_WRITE(MSR_X2APIC_ICR_TIMER, (uint32_t)reload);
 	} else {
 		gd->gd_timer_running = 1;
-		LAPIC_MSR_WRITE(MSR_X2APIC_ICR_TIMER, reload);
+		LAPIC_MSR_WRITE(MSR_X2APIC_ICR_TIMER, (uint32_t)reload);
 	}
 }
 
@@ -1117,20 +1127,27 @@ lapic_config(void)
 	TUNABLE_INT_FETCH("hw.x2apic_enable", &x2apic_enable);
 	if (x2apic_enable < 0)
 		x2apic_enable = 1;
-
 	if ((cpu_feature2 & CPUID2_X2APIC) == 0) {
 		/* X2APIC is not supported. */
 		x2apic_enable = 0;
-	} else if (!x2apic_enable) {
+	} else {
 		/*
 		 * If the BIOS enabled the X2APIC mode, then we would stick
 		 * with the X2APIC mode.
 		 */
 		apic_base = rdmsr(MSR_APICBASE);
 		if (apic_base & APICBASE_X2APIC) {
-			kprintf("LAPIC: BIOS enabled X2APIC mode\n");
+			if (x2apic_enable == 0)
+				kprintf("LAPIC: BIOS enabled X2APIC mode, force on\n");
+			else
+				kprintf("LAPIC: BIOS enabled X2APIC mode\n");
 			x2apic_enable = 1;
 		}
+	}
+	if (cpu_feature2 & CPUID2_X2APIC) {
+		apic_base = rdmsr(MSR_APICBASE);
+		if (apic_base & APICBASE_X2APIC)
+			kprintf("LAPIC: BIOS already enabled X2APIC mode\n");
 	}
 
 	if (x2apic_enable) {
@@ -1265,6 +1282,7 @@ lapic_sysinit(void *dummy __unused)
 		/* Initialize BSP's local APIC */
 		lapic_init(TRUE);
 	} else if (ioapic_enable) {
+		kprintf("IOAPIC disabled - lapic was not enabled\n");
 		ioapic_enable = 0;
 		icu_reinit_noioapic();
 	}

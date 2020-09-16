@@ -78,14 +78,16 @@
 #include "flow.h"
 #include "pathnames.h"
 
+struct config_vars	*rc_conf;
+
 static const char	*yes_to_y(const char *);
 
 /** CONFIGURE FUNCTIONS **/
 
-#define	PW_NOT_ALLOWED		":;,`~!@#$%^&*()+={}[]\\|/?<>'\" "
 #define	GECOS_NOT_ALLOWED	":,\\\""
 #define	FILENAME_NOT_ALLOWED	":;`~!#$^&*()={}[]\\|?<>'\" "
 #define	MEMBERSHIPS_NOT_ALLOWED	":;`~!@#$%^&*()+={}[]\\|/?<>'\" "
+#define	USERNAME_NOT_ALLOWED	(MEMBERSHIPS_NOT_ALLOWED ",")
 
 void
 fn_add_user(struct i_fn_args *a)
@@ -97,6 +99,7 @@ fn_add_user(struct i_fn_args *a)
 	struct command *cmd;
 	const char *username, *home, *passwd_1, *passwd_2, *gecos;
 	const char *shell, *uid, *group, *groups;
+	const char *passwd_env = "passwd";
 	int done = 0;
 
 	f = dfui_form_create(
@@ -105,10 +108,7 @@ fn_add_user(struct i_fn_args *a)
 	    _("Here you can add a user to an installed system.\n\n"
 	    "You can leave the Home Directory, User ID, and Login Group "
 	    "fields empty if you want these items to be automatically "
-	    "allocated by the system.\n\n"
-	    "Note: this user's password will appear in the install log. "
-	    "If this is a problem, please add the user manually after "
-	    "rebooting into the installed system instead."),
+	    "allocated by the system."),
 	    "",
 	    "f", "username", _("Username"),
 	    _("Enter the username the user will log in as"), "",
@@ -179,17 +179,18 @@ fn_add_user(struct i_fn_args *a)
 			inform(a->c, _("You must enter a username."));
 			done = 0;
 		} else if (strcmp(passwd_1, passwd_2) != 0) {
-			/* Passwords don't match; tell the user. */
 			inform(a->c, _("The passwords do not match."));
 			done = 0;
-		} else if (!assert_clean(a->c, _("Username"), username, PW_NOT_ALLOWED) ||
+		} else if (!assert_clean(a->c, _("Username"), username, USERNAME_NOT_ALLOWED) ||
 		    !assert_clean(a->c, _("Real Name"), gecos, GECOS_NOT_ALLOWED) ||
-		    !assert_clean(a->c, _("Password"), passwd_1, PW_NOT_ALLOWED) ||
 		    !assert_clean(a->c, _("Shell"), shell, FILENAME_NOT_ALLOWED) ||
 		    !assert_clean(a->c, _("Home Directory"), home, FILENAME_NOT_ALLOWED) ||
-		    !assert_clean(a->c, _("User ID"), uid, PW_NOT_ALLOWED) ||
-		    !assert_clean(a->c, _("Login Group"), group, PW_NOT_ALLOWED) ||
+		    !assert_clean(a->c, _("User ID"), uid, USERNAME_NOT_ALLOWED) ||
+		    !assert_clean(a->c, _("Login Group"), group, USERNAME_NOT_ALLOWED) ||
 		    !assert_clean(a->c, _("Group Memberships"), groups, MEMBERSHIPS_NOT_ALLOWED)) {
+			done = 0;
+		} else if (setenv(passwd_env, passwd_1, 1) != 0) {
+			inform(a->c, _("setenv() failed."));
 			done = 0;
 		} else if (!is_program("%s%s", a->os_root, shell) &&
 		    strcmp(shell, "/nonexistent") != 0) {
@@ -212,10 +213,10 @@ fn_add_user(struct i_fn_args *a)
 			    (strlen(home) == 0 || !is_dir("%s", home)) ?
 			    "-m -k /usr/share/skel" : "");
 
-			cmd = command_add(cmds, "%s%s '%s' | "
+			cmd = command_add(cmds, "%s%s \"$%s\" | "
 			    "%s%s %smnt/ /%s usermod '%s' -h 0",
 			    a->os_root, cmd_name(a, "ECHO"),
-			    passwd_1,
+			    passwd_env,
 			    a->os_root, cmd_name(a, "CHROOT"),
 			    a->os_root, cmd_name(a, "PW"),
 			    username);
@@ -229,6 +230,7 @@ fn_add_user(struct i_fn_args *a)
 				done = 0;
 			}
 
+			unsetenv(passwd_env);
 			commands_free(cmds);
 		}
 
@@ -247,15 +249,13 @@ fn_root_passwd(struct i_fn_args *a)
 	struct commands *cmds;
 	struct command *cmd;
 	const char *root_passwd_1, *root_passwd_2;
+	const char *passwd_env = "passwd";
 	int done = 0;
 
 	f = dfui_form_create(
 	    "root_passwd",
 	    _("Set Root Password"),
-	    _("Here you can set the super-user (root) password.\n\n"
-	    "Note: root's new password will appear in the install log. "
-	    "If this is a problem, please set root's password manually "
-	    "after rebooting into the installed system instead."),
+	    _("Here you can set the super-user (root) password."),
 	    "",
 
 	    "f", "root_passwd_1", _("Root password"),
@@ -281,55 +281,47 @@ fn_root_passwd(struct i_fn_args *a)
 		if (!dfui_be_present(a->c, f, &r))
 			abort_backend();
 
-		if (strcmp(dfui_response_get_action_id(r), "ok") == 0) {
-			new_ds = dfui_dataset_dup(dfui_response_dataset_get_first(r));
-			dfui_form_datasets_free(f);
-			dfui_form_dataset_add(f, new_ds);
+		if (strcmp(dfui_response_get_action_id(r), "cancel") == 0) {
+			done = 1;
+			dfui_response_free(r);
+			break;
+		}
 
-			/*
-			 * Fetch form field values.
-			 */
+		new_ds = dfui_dataset_dup(dfui_response_dataset_get_first(r));
+		dfui_form_datasets_free(f);
+		dfui_form_dataset_add(f, new_ds);
 
-			root_passwd_1 = dfui_dataset_get_value(new_ds, "root_passwd_1");
-			root_passwd_2 = dfui_dataset_get_value(new_ds, "root_passwd_2");
+		root_passwd_1 = dfui_dataset_get_value(new_ds, "root_passwd_1");
+		root_passwd_2 = dfui_dataset_get_value(new_ds, "root_passwd_2");
 
-			if (!assert_clean(a->c, _("Root password"), root_passwd_1, PW_NOT_ALLOWED)) {
-				done = 0;
-			} else if (strlen(root_passwd_1) == 0 && strlen(root_passwd_2) == 0) {
-				done = 0;
-			} else if (strcmp(root_passwd_1, root_passwd_2) == 0) {
-				/*
-				 * Passwords match, so set the root password.
-				 */
-				cmds = commands_new();
-				cmd = command_add(cmds, "%s%s '%s' | "
-				    "%s%s %smnt/ /%s usermod root -h 0",
-				    a->os_root, cmd_name(a, "ECHO"),
-				    root_passwd_1,
-				    a->os_root, cmd_name(a, "CHROOT"),
-				    a->os_root, cmd_name(a, "PW"));
-				command_set_desc(cmd, _("Setting password..."));
-				if (commands_execute(a, cmds)) {
-					inform(a->c, _("The root password has been changed."));
-					done = 1;
-				} else {
-					inform(a->c, _("An error occurred when "
-					    "setting the root password."));
-					done = 0;
-				}
-				commands_free(cmds);
+		if (strlen(root_passwd_1) == 0) {
+			inform(a->c, _("You must enter a password."));
+			done = 0;
+		} else if (strcmp(root_passwd_1, root_passwd_2) != 0) {
+			inform(a->c, _("The passwords do not match."));
+			done = 0;
+		} else if (setenv(passwd_env, root_passwd_1, 1) != 0) {
+			inform(a->c, _("setenv() failed."));
+			done = 0;
+		} else {
+			cmds = commands_new();
+			cmd = command_add(cmds, "%s%s \"$%s\" | "
+			    "%s%s %smnt/ /%s usermod root -h 0",
+			    a->os_root, cmd_name(a, "ECHO"),
+			    passwd_env,
+			    a->os_root, cmd_name(a, "CHROOT"),
+			    a->os_root, cmd_name(a, "PW"));
+			command_set_desc(cmd, _("Setting password..."));
+			if (commands_execute(a, cmds)) {
+				inform(a->c, _("The root password has been changed."));
+				done = 1;
 			} else {
-				/*
-				 * Passwords don't match - tell the user, let them try again.
-				 */
-				inform(a->c, _("The passwords do not match."));
+				inform(a->c, _("An error occurred when "
+				    "setting the root password."));
 				done = 0;
 			}
-		} else {
-			/*
-			 * Cancelled by user
-			 */
-			done = 1;
+			unsetenv(passwd_env);
+			commands_free(cmds);
 		}
 
 		dfui_response_free(r);

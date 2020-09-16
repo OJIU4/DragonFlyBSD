@@ -88,6 +88,7 @@
 #define RAND_SRC_THREAD1	0x000b
 #define RAND_SRC_THREAD2	0x000c
 #define RAND_SRC_THREAD3	0x000d
+#define RAND_SRC_TPM		0x000e
 
 #define RAND_SRC_MASK		0x00FF
 
@@ -114,6 +115,8 @@ int random_filter_read(struct knote *kn, long hint);
 
 #endif /* _KERNEL */
 
+__BEGIN_DECLS
 ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
+__END_DECLS
 
 #endif /* !_SYS_RANDOM_H_ */

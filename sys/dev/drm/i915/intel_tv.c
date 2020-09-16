@@ -856,7 +856,7 @@ intel_enable_tv(struct intel_encoder *encoder,
 	struct drm_i915_private *dev_priv = to_i915(dev);
 
 	/* Prevents vblank waits from timing out in intel_tv_detect_type() */
-	intel_wait_for_vblank(encoder->base.dev,
+	intel_wait_for_vblank(dev_priv,
 			      to_intel_crtc(encoder->base.crtc)->pipe);
 
 	I915_WRITE(TV_CTL, I915_READ(TV_CTL) | TV_ENC_ENABLE);
@@ -1029,8 +1029,7 @@ static void intel_tv_pre_enable(struct intel_encoder *encoder,
 				struct intel_crtc_state *pipe_config,
 				struct drm_connector_state *conn_state)
 {
-	struct drm_device *dev = encoder->base.dev;
-	struct drm_i915_private *dev_priv = to_i915(dev);
+	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
 	struct intel_tv *intel_tv = enc_to_tv(encoder);
 	const struct tv_mode *tv_mode = intel_tv_mode_find(intel_tv);
@@ -1116,7 +1115,7 @@ static void intel_tv_pre_enable(struct intel_encoder *encoder,
 
 	set_color_conversion(dev_priv, color_conversion);
 
-	if (INTEL_INFO(dev)->gen >= 4)
+	if (INTEL_GEN(dev_priv) >= 4)
 		I915_WRITE(TV_CLR_KNOBS, 0x00404000);
 	else
 		I915_WRITE(TV_CLR_KNOBS, 0x00606000);
@@ -1238,7 +1237,7 @@ intel_tv_detect_type(struct intel_tv *intel_tv,
 	I915_WRITE(TV_DAC, tv_dac);
 	POSTING_READ(TV_DAC);
 
-	intel_wait_for_vblank(dev, intel_crtc->pipe);
+	intel_wait_for_vblank(dev_priv, intel_crtc->pipe);
 
 	type = -1;
 	tv_dac = I915_READ(TV_DAC);
@@ -1268,7 +1267,7 @@ intel_tv_detect_type(struct intel_tv *intel_tv,
 	POSTING_READ(TV_CTL);
 
 	/* For unknown reasons the hw barfs if we don't do this vblank wait. */
-	intel_wait_for_vblank(dev, intel_crtc->pipe);
+	intel_wait_for_vblank(dev_priv, intel_crtc->pipe);
 
 	/* Restore interrupt config */
 	if (connector->polled & DRM_CONNECTOR_POLL_HPD) {
@@ -1316,8 +1315,10 @@ static void intel_tv_find_better_format(struct drm_connector *connector)
  * Currently this always returns CONNECTOR_STATUS_UNKNOWN, as we need to be sure
  * we have a pipe programmed in order to probe the TV.
  */
-static enum drm_connector_status
-intel_tv_detect(struct drm_connector *connector, bool force)
+static int
+intel_tv_detect(struct drm_connector *connector,
+		struct drm_modeset_acquire_ctx *ctx,
+		bool force)
 {
 	struct drm_display_mode mode;
 	struct intel_tv *intel_tv = intel_attached_tv(connector);
@@ -1332,21 +1333,20 @@ intel_tv_detect(struct drm_connector *connector, bool force)
 
 	if (force) {
 		struct intel_load_detect_pipe tmp;
-		struct drm_modeset_acquire_ctx ctx;
+		int ret;
 
-		drm_modeset_acquire_init(&ctx, 0);
+		ret = intel_get_load_detect_pipe(connector, &mode, &tmp, ctx);
+		if (ret < 0)
+			return ret;
 
-		if (intel_get_load_detect_pipe(connector, &mode, &tmp, &ctx)) {
+		if (ret > 0) {
 			type = intel_tv_detect_type(intel_tv, connector);
-			intel_release_load_detect_pipe(connector, &tmp, &ctx);
+			intel_release_load_detect_pipe(connector, &tmp, ctx);
 			status = type < 0 ?
 				connector_status_disconnected :
 				connector_status_connected;
 		} else
 			status = connector_status_unknown;
-
-		drm_modeset_drop_locks(&ctx);
-		drm_modeset_acquire_fini(&ctx);
 	} else
 		return connector->status;
 
@@ -1517,7 +1517,6 @@ out:
 
 static const struct drm_connector_funcs intel_tv_connector_funcs = {
 	.dpms = drm_atomic_helper_connector_dpms,
-	.detect = intel_tv_detect,
 	.late_register = intel_connector_register,
 	.early_unregister = intel_connector_unregister,
 	.destroy = intel_tv_destroy,
@@ -1529,6 +1528,7 @@ static const struct drm_connector_funcs intel_tv_connector_funcs = {
 };
 
 static const struct drm_connector_helper_funcs intel_tv_connector_helper_funcs = {
+	.detect_ctx = intel_tv_detect,
 	.mode_valid = intel_tv_mode_valid,
 	.get_modes = intel_tv_get_modes,
 };
@@ -1538,9 +1538,9 @@ static const struct drm_encoder_funcs intel_tv_enc_funcs = {
 };
 
 void
-intel_tv_init(struct drm_device *dev)
+intel_tv_init(struct drm_i915_private *dev_priv)
 {
-	struct drm_i915_private *dev_priv = to_i915(dev);
+	struct drm_device *dev = &dev_priv->drm;
 	struct drm_connector *connector;
 	struct intel_tv *intel_tv;
 	struct intel_encoder *intel_encoder;
@@ -1622,6 +1622,7 @@ intel_tv_init(struct drm_device *dev)
 	intel_connector_attach_encoder(intel_connector, intel_encoder);
 
 	intel_encoder->type = INTEL_OUTPUT_TVOUT;
+	intel_encoder->power_domain = POWER_DOMAIN_PORT_OTHER;
 	intel_encoder->port = PORT_NONE;
 	intel_encoder->crtc_mask = (1 << 0) | (1 << 1);
 	intel_encoder->cloneable = 0;

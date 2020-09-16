@@ -61,8 +61,6 @@ extern int osreldate;		/* System release date */
 extern char version[];		/* system version */
 extern char copyright[];	/* system copyright */
 
-extern int selwait;		/* select timeout address */
-
 extern u_char curpriority;	/* priority of current process */
 extern int cpu_mwait_spin;	/* typically set in machdep, used by lwkt */
 
@@ -99,24 +97,39 @@ extern vm_paddr_t Maxmem;	/* Highest physical memory address in system */
 #define	KASSERT(exp,msg)	do { if (__predict_false(!(exp)))	  \
 					panic msg; } while (0)
 
-#define KKASSERT(exp)		do { if (__predict_false(!(exp)))	  \
+#define	KKASSERT(exp)		do { if (__predict_false(!(exp)))	  \
 					panic("assertion \"%s\" failed "  \
 					"in %s at %s:%u", #exp, __func__, \
 					__FILE__, __LINE__); } while (0)
 
-#define KKASSERT_UNSPIN(exp, spin)					  \
+#define	KKASSERT_UNSPIN(exp, spin)					  \
 				do { if (__predict_false(!(exp))) { 	  \
 					spin_unlock_any(spin);		  \
 					panic("assertion \"%s\" failed "  \
 					"in %s at %s:%u", #exp, __func__, \
 					__FILE__, __LINE__); } } while (0)
-#define __debugvar
+#define	__debugvar
+#define	__assert_unreachable()						  \
+				do {					  \
+					panic("executing segment marked " \
+					"as unreachable at %s:%d (%s)\n", \
+					__FILE__, __LINE__, __func__);    \
+				} while (0)
 #else
 #define	KASSERT(exp,msg)		do { } while (0)
 #define	KKASSERT(exp)			do { } while (0)
 #define	KKASSERT_UNSPIN(exp, spin)	do { } while (0)
-#define __debugvar		__attribute__((__unused__))
+#define	__debugvar		__attribute__((__unused__))
+#define	__assert_unreachable()	__unreachable()
 #endif
+
+/*
+ * Align variables.
+ */
+#define	__read_mostly		__section(".data.read_mostly")
+#define	__read_frequently	__section(".data.read_frequently")
+#define	__exclusive_cache_line	__aligned(__VM_CACHELINE_SIZE*2)	\
+				__section(".data.exclusive_cache_line")
 
 /*
  * General function declarations.
@@ -483,6 +496,23 @@ bitcount64(uint64_t x)
 	x = (x + (x >> 16));
 	x = (x + (x >> 32)) & 0x000000ff;
 	return (x);
+}
+
+/*
+ * Calculate (a * b) / d with a 128-bit intermediate computation to
+ * avoid overflow.
+ */
+static __inline uint64_t
+muldivu64(uint64_t a, uint64_t b, uint64_t d)
+{
+	unsigned __int128 t;
+
+	t = (unsigned __int128)a * b;
+	if (t / d > 0xFFFFFFFFFFFFFFFFLU) {
+		kprintf("muldivu64: overflow %ld,%ld,%ld\n", a, b, d);
+		print_backtrace(-1);
+	}
+	return (t / d);
 }
 
 #endif /* !_SYS_SYSTM_H_ */

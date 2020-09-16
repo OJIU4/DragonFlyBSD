@@ -29,19 +29,19 @@
 #ifndef	_LINUX_BITOPS_H_
 #define	_LINUX_BITOPS_H_
 
-#include <sys/types.h>
-#include <sys/systm.h>
-
 #include <asm/types.h>
 
 #define BIT(nr)			(1UL << (nr))
-#define	BITS_PER_LONG		64
+#define BIT_ULL(nb)		(1ULL << (nb))
 #define	BIT_MASK(n)		(~0UL >> (BITS_PER_LONG - (n)))
 #define	BITS_TO_LONGS(n)	howmany((n), BITS_PER_LONG)
 #define BIT_WORD(nr)		((nr) / BITS_PER_LONG)
 #define BITS_PER_BYTE		8
 
 #include <asm/bitops.h>
+
+#include <sys/types.h>
+#include <sys/systm.h>
 
 static inline int
 __ffs(int mask)
@@ -67,6 +67,17 @@ __flsl(long mask)
 	return (flsl(mask) - 1);
 }
 
+/*
+ * fls64 - find leftmost set bit in a 64-bit word
+ *
+ * Returns 0 if no bit is set or the bit
+ * position counted from 1 to 64 otherwise
+ */
+static inline int
+fls64(__u64 x)
+{
+	return flsl(x);
+}
 
 #define	ffz(mask)	__ffs(~(mask))
 
@@ -503,6 +514,9 @@ bitmap_release_region(unsigned long *bitmap, int pos, int order)
 #define GENMASK(h, l)	\
 	(((~0UL) >> (BITS_PER_LONG - (h) - 1)) & ((~0UL) << (l)))
 
+#define GENMASK_ULL(h, l) \
+	(((~0ULL) >> (BITS_PER_LONG_LONG - 1 - (h))) & ((~0ULL) << (l)))
+
 #include <asm/bitops/non-atomic.h>
 #include <asm/bitops/const_hweight.h>
 
@@ -511,6 +525,10 @@ bitmap_release_region(unsigned long *bitmap, int pos, int order)
 	     (bit) < (size);					\
 	     (bit) = find_next_bit((addr), (size), (bit) + 1))
 
+#define for_each_clear_bit(bit, addr, size) \
+	for ((bit) = find_first_zero_bit((addr), (size));	\
+	     (bit) < (size);						\
+	     (bit) = find_next_zero_bit((addr), (size), (bit) + 1))
 
 static inline int64_t
 sign_extend64(uint64_t value, int index)

@@ -31,8 +31,8 @@
 #define INITDEFINE6S	      14
 #else
 #define INITDEFINES	     124
-#define INITDEFINENDS	       6
+#define INITDEFINENDS	       7
 #define INITDEFINE6S	      69
 #endif
 
-extern const char * const dhcpcd_embedded_conf[];
+extern const char dhcpcd_embedded_conf[];

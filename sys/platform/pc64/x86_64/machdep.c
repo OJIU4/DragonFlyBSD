@@ -50,7 +50,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/sysproto.h>
+#include <sys/sysmsg.h>
 #include <sys/signalvar.h>
 #include <sys/kernel.h>
 #include <sys/linker.h>
@@ -165,6 +165,11 @@ cpumask_t smp_idleinvl_reqs;
  /* MWAIT hint (EAX) or CPU_MWAIT_HINT_ */
 __read_mostly static int cpu_mwait_halt_global;
 __read_mostly static int clock_debug1;
+__read_mostly static int flame_poll_debug;
+
+SYSCTL_INT(_debug, OID_AUTO, flame_poll_debug,
+	CTLFLAG_RW, &flame_poll_debug, 0, "");
+TUNABLE_INT("debug.flame_poll_debug", &flame_poll_debug);
 
 #if defined(SWTCH_OPTIM_STATS)
 extern int swtch_optim_stats;
@@ -937,7 +942,7 @@ cpu_sanitize_tls(struct savetls *tls)
 #define	CS_SECURE(cs)		(ISPL(cs) == SEL_UPL)
 
 int
-sys_sigreturn(struct sigreturn_args *uap)
+sys_sigreturn(struct sysmsg *sysmsg, const struct sigreturn_args *uap)
 {
 	struct lwp *lp = curthread->td_lwp;
 	struct trapframe *regs;
@@ -1755,9 +1760,142 @@ extern inthand_t
 	IDTVEC(div), IDTVEC(dbg), IDTVEC(nmi), IDTVEC(bpt), IDTVEC(ofl),
 	IDTVEC(bnd), IDTVEC(ill), IDTVEC(dna), IDTVEC(fpusegm),
 	IDTVEC(tss), IDTVEC(missing), IDTVEC(stk), IDTVEC(prot),
-	IDTVEC(page), IDTVEC(mchk), IDTVEC(rsvd), IDTVEC(fpu), IDTVEC(align),
+	IDTVEC(page), IDTVEC(mchk), IDTVEC(fpu), IDTVEC(align),
 	IDTVEC(xmm), IDTVEC(dblfault),
 	IDTVEC(fast_syscall), IDTVEC(fast_syscall32);
+
+extern inthand_t
+	IDTVEC(rsvd00), IDTVEC(rsvd01), IDTVEC(rsvd02), IDTVEC(rsvd03),
+	IDTVEC(rsvd04), IDTVEC(rsvd05), IDTVEC(rsvd06), IDTVEC(rsvd07),
+	IDTVEC(rsvd08), IDTVEC(rsvd09), IDTVEC(rsvd0a), IDTVEC(rsvd0b),
+	IDTVEC(rsvd0c), IDTVEC(rsvd0d), IDTVEC(rsvd0e), IDTVEC(rsvd0f),
+	IDTVEC(rsvd10), IDTVEC(rsvd11), IDTVEC(rsvd12), IDTVEC(rsvd13),
+	IDTVEC(rsvd14), IDTVEC(rsvd15), IDTVEC(rsvd16), IDTVEC(rsvd17),
+	IDTVEC(rsvd18), IDTVEC(rsvd19), IDTVEC(rsvd1a), IDTVEC(rsvd1b),
+	IDTVEC(rsvd1c), IDTVEC(rsvd1d), IDTVEC(rsvd1e), IDTVEC(rsvd1f),
+	IDTVEC(rsvd20), IDTVEC(rsvd21), IDTVEC(rsvd22), IDTVEC(rsvd23),
+	IDTVEC(rsvd24), IDTVEC(rsvd25), IDTVEC(rsvd26), IDTVEC(rsvd27),
+	IDTVEC(rsvd28), IDTVEC(rsvd29), IDTVEC(rsvd2a), IDTVEC(rsvd2b),
+	IDTVEC(rsvd2c), IDTVEC(rsvd2d), IDTVEC(rsvd2e), IDTVEC(rsvd2f),
+	IDTVEC(rsvd30), IDTVEC(rsvd31), IDTVEC(rsvd32), IDTVEC(rsvd33),
+	IDTVEC(rsvd34), IDTVEC(rsvd35), IDTVEC(rsvd36), IDTVEC(rsvd37),
+	IDTVEC(rsvd38), IDTVEC(rsvd39), IDTVEC(rsvd3a), IDTVEC(rsvd3b),
+	IDTVEC(rsvd3c), IDTVEC(rsvd3d), IDTVEC(rsvd3e), IDTVEC(rsvd3f),
+	IDTVEC(rsvd40), IDTVEC(rsvd41), IDTVEC(rsvd42), IDTVEC(rsvd43),
+	IDTVEC(rsvd44), IDTVEC(rsvd45), IDTVEC(rsvd46), IDTVEC(rsvd47),
+	IDTVEC(rsvd48), IDTVEC(rsvd49), IDTVEC(rsvd4a), IDTVEC(rsvd4b),
+	IDTVEC(rsvd4c), IDTVEC(rsvd4d), IDTVEC(rsvd4e), IDTVEC(rsvd4f),
+	IDTVEC(rsvd50), IDTVEC(rsvd51), IDTVEC(rsvd52), IDTVEC(rsvd53),
+	IDTVEC(rsvd54), IDTVEC(rsvd55), IDTVEC(rsvd56), IDTVEC(rsvd57),
+	IDTVEC(rsvd58), IDTVEC(rsvd59), IDTVEC(rsvd5a), IDTVEC(rsvd5b),
+	IDTVEC(rsvd5c), IDTVEC(rsvd5d), IDTVEC(rsvd5e), IDTVEC(rsvd5f),
+	IDTVEC(rsvd60), IDTVEC(rsvd61), IDTVEC(rsvd62), IDTVEC(rsvd63),
+	IDTVEC(rsvd64), IDTVEC(rsvd65), IDTVEC(rsvd66), IDTVEC(rsvd67),
+	IDTVEC(rsvd68), IDTVEC(rsvd69), IDTVEC(rsvd6a), IDTVEC(rsvd6b),
+	IDTVEC(rsvd6c), IDTVEC(rsvd6d), IDTVEC(rsvd6e), IDTVEC(rsvd6f),
+	IDTVEC(rsvd70), IDTVEC(rsvd71), IDTVEC(rsvd72), IDTVEC(rsvd73),
+	IDTVEC(rsvd74), IDTVEC(rsvd75), IDTVEC(rsvd76), IDTVEC(rsvd77),
+	IDTVEC(rsvd78), IDTVEC(rsvd79), IDTVEC(rsvd7a), IDTVEC(rsvd7b),
+	IDTVEC(rsvd7c), IDTVEC(rsvd7d), IDTVEC(rsvd7e), IDTVEC(rsvd7f),
+	IDTVEC(rsvd80), IDTVEC(rsvd81), IDTVEC(rsvd82), IDTVEC(rsvd83),
+	IDTVEC(rsvd84), IDTVEC(rsvd85), IDTVEC(rsvd86), IDTVEC(rsvd87),
+	IDTVEC(rsvd88), IDTVEC(rsvd89), IDTVEC(rsvd8a), IDTVEC(rsvd8b),
+	IDTVEC(rsvd8c), IDTVEC(rsvd8d), IDTVEC(rsvd8e), IDTVEC(rsvd8f),
+	IDTVEC(rsvd90), IDTVEC(rsvd91), IDTVEC(rsvd92), IDTVEC(rsvd93),
+	IDTVEC(rsvd94), IDTVEC(rsvd95), IDTVEC(rsvd96), IDTVEC(rsvd97),
+	IDTVEC(rsvd98), IDTVEC(rsvd99), IDTVEC(rsvd9a), IDTVEC(rsvd9b),
+	IDTVEC(rsvd9c), IDTVEC(rsvd9d), IDTVEC(rsvd9e), IDTVEC(rsvd9f),
+	IDTVEC(rsvda0), IDTVEC(rsvda1), IDTVEC(rsvda2), IDTVEC(rsvda3),
+	IDTVEC(rsvda4), IDTVEC(rsvda5), IDTVEC(rsvda6), IDTVEC(rsvda7),
+	IDTVEC(rsvda8), IDTVEC(rsvda9), IDTVEC(rsvdaa), IDTVEC(rsvdab),
+	IDTVEC(rsvdac), IDTVEC(rsvdad), IDTVEC(rsvdae), IDTVEC(rsvdaf),
+	IDTVEC(rsvdb0), IDTVEC(rsvdb1), IDTVEC(rsvdb2), IDTVEC(rsvdb3),
+	IDTVEC(rsvdb4), IDTVEC(rsvdb5), IDTVEC(rsvdb6), IDTVEC(rsvdb7),
+	IDTVEC(rsvdb8), IDTVEC(rsvdb9), IDTVEC(rsvdba), IDTVEC(rsvdbb),
+	IDTVEC(rsvdbc), IDTVEC(rsvdbd), IDTVEC(rsvdbe), IDTVEC(rsvdbf),
+	IDTVEC(rsvdc0), IDTVEC(rsvdc1), IDTVEC(rsvdc2), IDTVEC(rsvdc3),
+	IDTVEC(rsvdc4), IDTVEC(rsvdc5), IDTVEC(rsvdc6), IDTVEC(rsvdc7),
+	IDTVEC(rsvdc8), IDTVEC(rsvdc9), IDTVEC(rsvdca), IDTVEC(rsvdcb),
+	IDTVEC(rsvdcc), IDTVEC(rsvdcd), IDTVEC(rsvdce), IDTVEC(rsvdcf),
+	IDTVEC(rsvdd0), IDTVEC(rsvdd1), IDTVEC(rsvdd2), IDTVEC(rsvdd3),
+	IDTVEC(rsvdd4), IDTVEC(rsvdd5), IDTVEC(rsvdd6), IDTVEC(rsvdd7),
+	IDTVEC(rsvdd8), IDTVEC(rsvdd9), IDTVEC(rsvdda), IDTVEC(rsvddb),
+	IDTVEC(rsvddc), IDTVEC(rsvddd), IDTVEC(rsvdde), IDTVEC(rsvddf),
+	IDTVEC(rsvde0), IDTVEC(rsvde1), IDTVEC(rsvde2), IDTVEC(rsvde3),
+	IDTVEC(rsvde4), IDTVEC(rsvde5), IDTVEC(rsvde6), IDTVEC(rsvde7),
+	IDTVEC(rsvde8), IDTVEC(rsvde9), IDTVEC(rsvdea), IDTVEC(rsvdeb),
+	IDTVEC(rsvdec), IDTVEC(rsvded), IDTVEC(rsvdee), IDTVEC(rsvdef),
+	IDTVEC(rsvdf0), IDTVEC(rsvdf1), IDTVEC(rsvdf2), IDTVEC(rsvdf3),
+	IDTVEC(rsvdf4), IDTVEC(rsvdf5), IDTVEC(rsvdf6), IDTVEC(rsvdf7),
+	IDTVEC(rsvdf8), IDTVEC(rsvdf9), IDTVEC(rsvdfa), IDTVEC(rsvdfb),
+	IDTVEC(rsvdfc), IDTVEC(rsvdfd), IDTVEC(rsvdfe), IDTVEC(rsvdff);
+
+inthand_t *rsvdary[NIDT] = {
+	&IDTVEC(rsvd00), &IDTVEC(rsvd01), &IDTVEC(rsvd02), &IDTVEC(rsvd03),
+	&IDTVEC(rsvd04), &IDTVEC(rsvd05), &IDTVEC(rsvd06), &IDTVEC(rsvd07),
+	&IDTVEC(rsvd08), &IDTVEC(rsvd09), &IDTVEC(rsvd0a), &IDTVEC(rsvd0b),
+	&IDTVEC(rsvd0c), &IDTVEC(rsvd0d), &IDTVEC(rsvd0e), &IDTVEC(rsvd0f),
+	&IDTVEC(rsvd10), &IDTVEC(rsvd11), &IDTVEC(rsvd12), &IDTVEC(rsvd13),
+	&IDTVEC(rsvd14), &IDTVEC(rsvd15), &IDTVEC(rsvd16), &IDTVEC(rsvd17),
+	&IDTVEC(rsvd18), &IDTVEC(rsvd19), &IDTVEC(rsvd1a), &IDTVEC(rsvd1b),
+	&IDTVEC(rsvd1c), &IDTVEC(rsvd1d), &IDTVEC(rsvd1e), &IDTVEC(rsvd1f),
+	&IDTVEC(rsvd20), &IDTVEC(rsvd21), &IDTVEC(rsvd22), &IDTVEC(rsvd23),
+	&IDTVEC(rsvd24), &IDTVEC(rsvd25), &IDTVEC(rsvd26), &IDTVEC(rsvd27),
+	&IDTVEC(rsvd28), &IDTVEC(rsvd29), &IDTVEC(rsvd2a), &IDTVEC(rsvd2b),
+	&IDTVEC(rsvd2c), &IDTVEC(rsvd2d), &IDTVEC(rsvd2e), &IDTVEC(rsvd2f),
+	&IDTVEC(rsvd30), &IDTVEC(rsvd31), &IDTVEC(rsvd32), &IDTVEC(rsvd33),
+	&IDTVEC(rsvd34), &IDTVEC(rsvd35), &IDTVEC(rsvd36), &IDTVEC(rsvd37),
+	&IDTVEC(rsvd38), &IDTVEC(rsvd39), &IDTVEC(rsvd3a), &IDTVEC(rsvd3b),
+	&IDTVEC(rsvd3c), &IDTVEC(rsvd3d), &IDTVEC(rsvd3e), &IDTVEC(rsvd3f),
+	&IDTVEC(rsvd40), &IDTVEC(rsvd41), &IDTVEC(rsvd42), &IDTVEC(rsvd43),
+	&IDTVEC(rsvd44), &IDTVEC(rsvd45), &IDTVEC(rsvd46), &IDTVEC(rsvd47),
+	&IDTVEC(rsvd48), &IDTVEC(rsvd49), &IDTVEC(rsvd4a), &IDTVEC(rsvd4b),
+	&IDTVEC(rsvd4c), &IDTVEC(rsvd4d), &IDTVEC(rsvd4e), &IDTVEC(rsvd4f),
+	&IDTVEC(rsvd50), &IDTVEC(rsvd51), &IDTVEC(rsvd52), &IDTVEC(rsvd53),
+	&IDTVEC(rsvd54), &IDTVEC(rsvd55), &IDTVEC(rsvd56), &IDTVEC(rsvd57),
+	&IDTVEC(rsvd58), &IDTVEC(rsvd59), &IDTVEC(rsvd5a), &IDTVEC(rsvd5b),
+	&IDTVEC(rsvd5c), &IDTVEC(rsvd5d), &IDTVEC(rsvd5e), &IDTVEC(rsvd5f),
+	&IDTVEC(rsvd60), &IDTVEC(rsvd61), &IDTVEC(rsvd62), &IDTVEC(rsvd63),
+	&IDTVEC(rsvd64), &IDTVEC(rsvd65), &IDTVEC(rsvd66), &IDTVEC(rsvd67),
+	&IDTVEC(rsvd68), &IDTVEC(rsvd69), &IDTVEC(rsvd6a), &IDTVEC(rsvd6b),
+	&IDTVEC(rsvd6c), &IDTVEC(rsvd6d), &IDTVEC(rsvd6e), &IDTVEC(rsvd6f),
+	&IDTVEC(rsvd70), &IDTVEC(rsvd71), &IDTVEC(rsvd72), &IDTVEC(rsvd73),
+	&IDTVEC(rsvd74), &IDTVEC(rsvd75), &IDTVEC(rsvd76), &IDTVEC(rsvd77),
+	&IDTVEC(rsvd78), &IDTVEC(rsvd79), &IDTVEC(rsvd7a), &IDTVEC(rsvd7b),
+	&IDTVEC(rsvd7c), &IDTVEC(rsvd7d), &IDTVEC(rsvd7e), &IDTVEC(rsvd7f),
+	&IDTVEC(rsvd80), &IDTVEC(rsvd81), &IDTVEC(rsvd82), &IDTVEC(rsvd83),
+	&IDTVEC(rsvd84), &IDTVEC(rsvd85), &IDTVEC(rsvd86), &IDTVEC(rsvd87),
+	&IDTVEC(rsvd88), &IDTVEC(rsvd89), &IDTVEC(rsvd8a), &IDTVEC(rsvd8b),
+	&IDTVEC(rsvd8c), &IDTVEC(rsvd8d), &IDTVEC(rsvd8e), &IDTVEC(rsvd8f),
+	&IDTVEC(rsvd90), &IDTVEC(rsvd91), &IDTVEC(rsvd92), &IDTVEC(rsvd93),
+	&IDTVEC(rsvd94), &IDTVEC(rsvd95), &IDTVEC(rsvd96), &IDTVEC(rsvd97),
+	&IDTVEC(rsvd98), &IDTVEC(rsvd99), &IDTVEC(rsvd9a), &IDTVEC(rsvd9b),
+	&IDTVEC(rsvd9c), &IDTVEC(rsvd9d), &IDTVEC(rsvd9e), &IDTVEC(rsvd9f),
+	&IDTVEC(rsvda0), &IDTVEC(rsvda1), &IDTVEC(rsvda2), &IDTVEC(rsvda3),
+	&IDTVEC(rsvda4), &IDTVEC(rsvda5), &IDTVEC(rsvda6), &IDTVEC(rsvda7),
+	&IDTVEC(rsvda8), &IDTVEC(rsvda9), &IDTVEC(rsvdaa), &IDTVEC(rsvdab),
+	&IDTVEC(rsvdac), &IDTVEC(rsvdad), &IDTVEC(rsvdae), &IDTVEC(rsvdaf),
+	&IDTVEC(rsvdb0), &IDTVEC(rsvdb1), &IDTVEC(rsvdb2), &IDTVEC(rsvdb3),
+	&IDTVEC(rsvdb4), &IDTVEC(rsvdb5), &IDTVEC(rsvdb6), &IDTVEC(rsvdb7),
+	&IDTVEC(rsvdb8), &IDTVEC(rsvdb9), &IDTVEC(rsvdba), &IDTVEC(rsvdbb),
+	&IDTVEC(rsvdbc), &IDTVEC(rsvdbd), &IDTVEC(rsvdbe), &IDTVEC(rsvdbf),
+	&IDTVEC(rsvdc0), &IDTVEC(rsvdc1), &IDTVEC(rsvdc2), &IDTVEC(rsvdc3),
+	&IDTVEC(rsvdc4), &IDTVEC(rsvdc5), &IDTVEC(rsvdc6), &IDTVEC(rsvdc7),
+	&IDTVEC(rsvdc8), &IDTVEC(rsvdc9), &IDTVEC(rsvdca), &IDTVEC(rsvdcb),
+	&IDTVEC(rsvdcc), &IDTVEC(rsvdcd), &IDTVEC(rsvdce), &IDTVEC(rsvdcf),
+	&IDTVEC(rsvdd0), &IDTVEC(rsvdd1), &IDTVEC(rsvdd2), &IDTVEC(rsvdd3),
+	&IDTVEC(rsvdd4), &IDTVEC(rsvdd5), &IDTVEC(rsvdd6), &IDTVEC(rsvdd7),
+	&IDTVEC(rsvdd8), &IDTVEC(rsvdd9), &IDTVEC(rsvdda), &IDTVEC(rsvddb),
+	&IDTVEC(rsvddc), &IDTVEC(rsvddd), &IDTVEC(rsvdde), &IDTVEC(rsvddf),
+	&IDTVEC(rsvde0), &IDTVEC(rsvde1), &IDTVEC(rsvde2), &IDTVEC(rsvde3),
+	&IDTVEC(rsvde4), &IDTVEC(rsvde5), &IDTVEC(rsvde6), &IDTVEC(rsvde7),
+	&IDTVEC(rsvde8), &IDTVEC(rsvde9), &IDTVEC(rsvdea), &IDTVEC(rsvdeb),
+	&IDTVEC(rsvdec), &IDTVEC(rsvded), &IDTVEC(rsvdee), &IDTVEC(rsvdef),
+	&IDTVEC(rsvdf0), &IDTVEC(rsvdf1), &IDTVEC(rsvdf2), &IDTVEC(rsvdf3),
+	&IDTVEC(rsvdf4), &IDTVEC(rsvdf5), &IDTVEC(rsvdf6), &IDTVEC(rsvdf7),
+	&IDTVEC(rsvdf8), &IDTVEC(rsvdf9), &IDTVEC(rsvdfa), &IDTVEC(rsvdfb),
+	&IDTVEC(rsvdfc), &IDTVEC(rsvdfd), &IDTVEC(rsvdfe), &IDTVEC(rsvdff)
+};
 
 void
 sdtossd(struct user_segment_descriptor *sd, struct soft_segment_descriptor *ssd)
@@ -1866,6 +2004,10 @@ add_smap_entries(int *physmap_idx)
 
 		Realmem += smap->length;
 
+		/*
+		 * NOTE: This little bit of code initially expands
+		 *	 physmap[1] as well as later entries.
+		 */
 		if (smap->base == physmap[*physmap_idx + 1]) {
 			physmap[*physmap_idx + 1] += smap->length;
 			continue;
@@ -1968,6 +2110,10 @@ add_efi_map_entries(int *physmap_idx)
 
 		Realmem += p->md_pages * PAGE_SIZE;
 
+		/*
+		 * NOTE: This little bit of code initially expands
+		 *	 physmap[1] as well as later entries.
+		 */
 		if (p->md_phys == physmap[*physmap_idx + 1]) {
 			physmap[*physmap_idx + 1] += p->md_pages * PAGE_SIZE;
 			continue;
@@ -1998,11 +2144,13 @@ efi_fb_init_vaddr(int direct_map)
 
 	if (direct_map) {
 		addr = PHYS_TO_DMAP(efi_fb_info.paddr);
-		if (addr >= DMAP_MIN_ADDRESS && addr + sz < DMAP_MAX_ADDRESS)
+		if (addr >= DMAP_MIN_ADDRESS && addr + sz <= DMapMaxAddress)
 			efi_fb_info.vaddr = addr;
 	} else {
-		efi_fb_info.vaddr = (vm_offset_t)pmap_mapdev_attr(
-		    efi_fb_info.paddr, sz, PAT_WRITE_COMBINING);
+		efi_fb_info.vaddr =
+			(vm_offset_t)pmap_mapdev_attr(efi_fb_info.paddr,
+						      sz,
+						      PAT_WRITE_COMBINING);
 	}
 }
 
@@ -2424,24 +2572,17 @@ do_next:
 		pmap_kenter((vm_offset_t)msgbufp + off, avail_end + off);
 	}
 
-	/* Try to get EFI framebuffer working as early as possible */
-	{
-		/*
-		 * HACK: Setting machdep.hack_efifb_probe_early=1 works around
-		 * an issue that occurs on some recent systems where there is
-		 * no system console when booting via UEFI. Bug #3167.
-		 *
-		 * NOTE: This is not intended to be a permant fix.
-		 */
-
-		int hack_efifb_probe_early = 0;
-		TUNABLE_INT_FETCH("machdep.hack_efifb_probe_early", &hack_efifb_probe_early);
-
-		if (hack_efifb_probe_early)
-			probe_efi_fb(1);
-		else if (have_efi_framebuffer)
-			efi_fb_init_vaddr(1);
-	}
+	/*
+	 * Try to get EFI framebuffer working as early as possible.
+	 *
+	 * WARN: Some BIOSes do not list the EFI framebuffer memory, causing
+	 * the pmap probe code to create a DMAP that does not cover its
+	 * physical address space, efi_fb_init_vaddr(1) might not return
+	 * an initialized framebuffer base pointer.  In this situation the
+	 * later efi_fb_init_vaddr(0) call will deal with it.
+	 */
+	if (have_efi_framebuffer)
+		efi_fb_init_vaddr(1);
 }
 
 struct machintr_abi MachIntrABI;
@@ -2577,7 +2718,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 
 	/* exceptions */
 	for (x = 0; x < NIDT; x++)
-		setidt_global(x, &IDTVEC(rsvd), SDT_SYSIGT, SEL_KPL, 0);
+		setidt_global(x, rsvdary[x], SDT_SYSIGT, SEL_KPL, 0);
 	setidt_global(IDT_DE, &IDTVEC(div),  SDT_SYSIGT, SEL_KPL, 0);
 	setidt_global(IDT_DB, &IDTVEC(dbg),  SDT_SYSIGT, SEL_KPL, 2);
 	setidt_global(IDT_NMI, &IDTVEC(nmi),  SDT_SYSIGT, SEL_KPL, 1);
@@ -2672,20 +2813,28 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	TUNABLE_INT_FETCH("machdep.cpu_idle_hlt", &cpu_idle_hlt);
 
 	/*
-	 * Some of the virtual machines do not work w/ I/O APIC
-	 * enabled.  If the user does not explicitly enable or
-	 * disable the I/O APIC (ioapic_enable < 0), then we
-	 * disable I/O APIC on all virtual machines.
+	 * By default always enable the ioapic.  Certain virtual machines
+	 * may not work with the I/O apic enabled and can be specified in
+	 * the case statement below.  On the other hand, if the ioapic is
+	 * disabled for virtual machines which DO work with the I/O apic,
+	 * the virtual machine can implode if we disable the I/O apic.
 	 *
-	 * NOTE:
-	 * This must be done after identify_cpu(), which sets
-	 * 'cpu_feature2'
+	 * For now enable the ioapic for all guests.
+	 *
+	 * NOTE: This must be done after identify_cpu(), which sets
+	 *	 'cpu_feature2'.
 	 */
 	if (ioapic_enable < 0) {
-		if (cpu_feature2 & CPUID2_VMM)
-			ioapic_enable = 0;
-		else
+		ioapic_enable = 1;
+		switch(vmm_guest) {
+		case VMM_GUEST_NONE:	/* should be enabled on real HW */
+		case VMM_GUEST_KVM:	/* must be enabled or VM implodes */
 			ioapic_enable = 1;
+			break;
+		default:		/* enable by default for other VMs */
+			ioapic_enable = 1;
+			break;
+		}
 	}
 
 	/*
@@ -2941,17 +3090,17 @@ fill_dbregs(struct lwp *lp, struct dbreg *dbregs)
 {
 	struct pcb *pcb;
 
-        if (lp == NULL) {
-                dbregs->dr[0] = rdr0();
-                dbregs->dr[1] = rdr1();
-                dbregs->dr[2] = rdr2();
-                dbregs->dr[3] = rdr3();
-                dbregs->dr[4] = rdr4();
-                dbregs->dr[5] = rdr5();
-                dbregs->dr[6] = rdr6();
-                dbregs->dr[7] = rdr7();
+	if (lp == NULL) {
+		dbregs->dr[0] = rdr0();
+		dbregs->dr[1] = rdr1();
+		dbregs->dr[2] = rdr2();
+		dbregs->dr[3] = rdr3();
+		dbregs->dr[4] = rdr4();
+		dbregs->dr[5] = rdr5();
+		dbregs->dr[6] = rdr6();
+		dbregs->dr[7] = rdr7();
 		return (0);
-        }
+	}
 	if (lp->lwp_thread == NULL || (pcb = lp->lwp_thread->td_pcb) == NULL)
 		return EINVAL;
 	dbregs->dr[0] = pcb->pcb_dr0;
@@ -3068,65 +3217,65 @@ set_dbregs(struct lwp *lp, struct dbreg *dbregs)
 int
 user_dbreg_trap(void)
 {
-        u_int64_t dr7, dr6; /* debug registers dr6 and dr7 */
-        u_int64_t bp;       /* breakpoint bits extracted from dr6 */
-        int nbp;            /* number of breakpoints that triggered */
-        caddr_t addr[4];    /* breakpoint addresses */
-        int i;
+	u_int64_t dr7, dr6; /* debug registers dr6 and dr7 */
+	u_int64_t bp;       /* breakpoint bits extracted from dr6 */
+	int nbp;            /* number of breakpoints that triggered */
+	caddr_t addr[4];    /* breakpoint addresses */
+	int i;
 
-        dr7 = rdr7();
-        if ((dr7 & 0xff) == 0) {
-                /*
-                 * all GE and LE bits in the dr7 register are zero,
-                 * thus the trap couldn't have been caused by the
-                 * hardware debug registers
-                 */
-                return 0;
-        }
+	dr7 = rdr7();
+	if ((dr7 & 0xff) == 0) {
+		/*
+		 * all GE and LE bits in the dr7 register are zero,
+		 * thus the trap couldn't have been caused by the
+		 * hardware debug registers
+		 */
+		return 0;
+	}
 
-        nbp = 0;
-        dr6 = rdr6();
-        bp = dr6 & 0xf;
+	nbp = 0;
+	dr6 = rdr6();
+	bp = dr6 & 0xf;
 
-        if (bp == 0) {
-                /*
-                 * None of the breakpoint bits are set meaning this
-                 * trap was not caused by any of the debug registers
-                 */
-                return 0;
-        }
+	if (bp == 0) {
+		/*
+		 * None of the breakpoint bits are set meaning this
+		 * trap was not caused by any of the debug registers
+		 */
+		return 0;
+	}
 
-        /*
-         * at least one of the breakpoints were hit, check to see
-         * which ones and if any of them are user space addresses
-         */
+	/*
+	 * at least one of the breakpoints were hit, check to see
+	 * which ones and if any of them are user space addresses
+	 */
 
-        if (bp & 0x01) {
-                addr[nbp++] = (caddr_t)rdr0();
-        }
-        if (bp & 0x02) {
-                addr[nbp++] = (caddr_t)rdr1();
-        }
-        if (bp & 0x04) {
-                addr[nbp++] = (caddr_t)rdr2();
-        }
-        if (bp & 0x08) {
-                addr[nbp++] = (caddr_t)rdr3();
-        }
+	if (bp & 0x01) {
+		addr[nbp++] = (caddr_t)rdr0();
+	}
+	if (bp & 0x02) {
+		addr[nbp++] = (caddr_t)rdr1();
+	}
+	if (bp & 0x04) {
+		addr[nbp++] = (caddr_t)rdr2();
+	}
+	if (bp & 0x08) {
+		addr[nbp++] = (caddr_t)rdr3();
+	}
 
-        for (i = 0; i < nbp; i++) {
-                if (addr[i] < (caddr_t)VM_MAX_USER_ADDRESS) {
-                        /*
-                         * addr[i] is in user space
-                         */
-                        return nbp;
-                }
-        }
+	for (i = 0; i < nbp; i++) {
+		if (addr[i] < (caddr_t)VM_MAX_USER_ADDRESS) {
+			/*
+			 * addr[i] is in user space
+			 */
+			return nbp;
+		}
+	}
 
-        /*
-         * None of the breakpoints are in user space.
-         */
-        return 0;
+	/*
+	 * None of the breakpoints are in user space.
+	 */
+	return 0;
 }
 
 
@@ -3455,51 +3604,50 @@ cpu_mwait_cx_spin_sysctl(SYSCTL_HANDLER_ARGS)
 static int saveticks[SMP_MAXCPU];
 static int savecounts[SMP_MAXCPU];
 #endif
+static tsc_uclock_t last_tsc[SMP_MAXCPU];
 
 void
 pcpu_timer_always(struct intrframe *frame)
 {
-#if 0
-	globaldata_t gd = mycpu;
-	int cpu = gd->gd_cpuid;
-	char buf[64];
-	short *gptr;
-	int i;
+	globaldata_t gd;
+	thread_t td;
+	char *top;
+	char *bot;
+	char *rbp;
+	char *rip;
+	int n;
+	tsc_uclock_t tsc;
 
-	if (cpu <= 20) {
-		gptr = (short *)0xFFFFFFFF800b8000 + 80 * cpu;
-		*gptr = ((*gptr + 1) & 0x00FF) | 0x0700;
-		++gptr;
+	if (flame_poll_debug == 0)
+		return;
+	gd = mycpu;
+	tsc = rdtsc() - last_tsc[gd->gd_cpuid];
+	if (tsc_frequency == 0 || tsc < tsc_frequency)
+		return;
+	last_tsc[gd->gd_cpuid] = rdtsc();
 
-		ksnprintf(buf, sizeof(buf), " %p %16s %d %16s ",
-		    (void *)frame->if_rip, gd->gd_curthread->td_comm, ticks,
-		    gd->gd_infomsg);
-		for (i = 0; buf[i]; ++i) {
-			gptr[i] = 0x0700 | (unsigned char)buf[i];
-		}
+	td = gd->gd_curthread;
+	if (td == NULL)
+		return;
+	bot = (char *)td->td_kstack + PAGE_SIZE;        /* skip guard */
+	top = (char *)td->td_kstack + td->td_kstack_size;
+	if (bot >= top)
+		return;
+
+	rip = (char *)(intptr_t)frame->if_rip;
+	kprintf("POLL%02d %016lx", gd->gd_cpuid, (intptr_t)rip);
+	rbp = (char *)(intptr_t)frame->if_rbp;
+
+	for (n = 1; n < 8; ++n) {
+		if (rbp < bot || rbp > top - 8 || ((intptr_t)rbp & 7))
+			break;
+		kprintf("<-%016lx", (intptr_t)*(char **)(rbp + 8));
+		if (*(char **)rbp <= rbp)
+			break;
+		rbp = *(char **)rbp;
 	}
-#if 0
-	if (saveticks[gd->gd_cpuid] != ticks) {
-		saveticks[gd->gd_cpuid] = ticks;
-		savecounts[gd->gd_cpuid] = 0;
-	}
-	++savecounts[gd->gd_cpuid];
-	if (savecounts[gd->gd_cpuid] > 2000 && panicstr == NULL) {
-		panic("cpud %d panicing on ticks failure",
-			gd->gd_cpuid);
-	}
-	for (i = 0; i < ncpus; ++i) {
-		int delta;
-		if (saveticks[i] && panicstr == NULL) {
-			delta = saveticks[i] - ticks;
-			if (delta < -10 || delta > 10) {
-				panic("cpu %d panicing on cpu %d watchdog",
-				      gd->gd_cpuid, i);
-			}
-		}
-	}
-#endif
-#endif
+	kprintf("\n");
+	cpu_sfence();
 }
 
 SET_DECLARE(smap_open, char);

@@ -67,7 +67,8 @@ static struct tun_softc *tuncreate(cdev_t, int);
 static void		tundestroy(struct tun_softc *sc);
 
 /* clone */
-static int		tun_clone_create(struct if_clone *, int, caddr_t);
+static int		tun_clone_create(struct if_clone *, int,
+					 caddr_t, caddr_t);
 static int		tun_clone_destroy(struct ifnet *);
 
 /* network interface */
@@ -182,16 +183,24 @@ tunmodevent(module_t mod, int type, void *data)
 static int
 tunclone(struct dev_clone_args *ap)
 {
+	char ifname[IFNAMSIZ];
 	int unit;
 
 	unit = devfs_clone_bitmap_get(&DEVFS_CLONE_BITMAP(tun), 0);
+	ksnprintf(ifname, IFNAMSIZ, "%s%d", TUN, unit);
 	ap->a_dev = make_only_dev(&tun_ops, unit, UID_UUCP, GID_DIALER,
-				  0600, "%s%d", TUN, unit);
+				  0600, "%s", ifname);
 
-	if (tuncreate(ap->a_dev, 0) == NULL)
-		return (ENOMEM);
-	else
-		return (0);
+	/*
+	 * Use the if_clone framework to create cloned device/interface,
+	 * so the two clone methods (autoclone device /dev/tun; ifconfig
+	 * clone) are consistent and can be mix used.
+	 *
+	 * Need to pass the cdev_t because the device created by
+	 * 'make_only_dev()' doesn't appear in '/dev' yet so that it can't
+	 * be found by 'devfs_find_device_by_name()' in 'tun_clone_create()'.
+	 */
+	return (if_clone_create(ifname, IFNAMSIZ, NULL, (caddr_t)ap->a_dev));
 }
 
 static struct tun_softc *
@@ -269,7 +278,6 @@ static int
 tunopen(struct dev_open_args *ap)
 {
 	cdev_t dev = ap->a_head.a_dev;
-	struct ifnet *ifp;
 	struct tun_softc *sc;
 	int error;
 
@@ -277,24 +285,16 @@ tunopen(struct dev_open_args *ap)
 		return (error);
 
 	sc = dev->si_drv1;
-	if (sc == NULL && (sc = tuncreate(dev, TUN_MANUALMAKE)) == NULL)
+	if (sc == NULL && (sc = tuncreate(dev, 0)) == NULL)
 		return (ENOMEM);
 	if (sc->tun_flags & TUN_OPEN)
 		return (EBUSY);
-
-	ifp = sc->tun_ifp;
-	if ((sc->tun_flags & TUN_CLONE) == 0) {
-		EVENTHANDLER_INVOKE(ifnet_attach_event, ifp);
-
-		/* Announce the return of the interface. */
-		rt_ifannouncemsg(ifp, IFAN_ARRIVAL);
-	}
 
 	sc->tun_pid = curproc->p_pid;
 	sc->tun_flags |= TUN_OPEN;
 	tunrefcnt++;
 
-	TUNDEBUG(ifp, "opened, minor = %#x. Module refcnt = %d\n",
+	TUNDEBUG(sc->tun_ifp, "opened, minor = %#x. Module refcnt = %d\n",
 		 minor(dev), tunrefcnt);
 	return (0);
 }
@@ -309,6 +309,7 @@ tunclose(struct dev_close_args *ap)
 	struct tun_softc *sc = dev->si_drv1;
 	struct ifnet *ifp;
 	int unit = minor(dev);
+	char ifname[IFNAMSIZ];
 
 	KASSERT(sc != NULL,
 		("try closing the already destroyed %s%d", TUN, unit));
@@ -324,7 +325,7 @@ tunclose(struct dev_close_args *ap)
 		if_down(ifp);
 	ifp->if_flags &= ~IFF_RUNNING;
 
-	if ((sc->tun_flags & TUN_CLONE) == 0) {
+	if ((sc->tun_flags & TUN_MANUALMAKE) == 0) {
 		if_purgeaddrs_nolink(ifp);
 
 		EVENTHANDLER_INVOKE(ifnet_detach_event, ifp);
@@ -348,8 +349,8 @@ tunclose(struct dev_close_args *ap)
 
 	/* Only auto-destroy if the interface was not manually created. */
 	if ((sc->tun_flags & TUN_MANUALMAKE) == 0) {
-		tundestroy(sc);
-		dev->si_drv1 = NULL;
+		ksnprintf(ifname, IFNAMSIZ, "%s%d", TUN, unit);
+		if_clone_destroy(ifname);
 	}
 
 	return (0);
@@ -376,28 +377,35 @@ tunfind(int unit)
 
 static int
 tun_clone_create(struct if_clone *ifc __unused, int unit,
-		 caddr_t param __unused)
+		 caddr_t params __unused, caddr_t data)
 {
 	struct tun_softc *sc;
-	cdev_t dev;
+	cdev_t dev = (cdev_t)data;
+	int flags;
 
-	sc = tunfind(unit);
-	if (sc == NULL) {
+	if (tunfind(unit) != NULL)
+		return (EEXIST);
+
+	if (dev == NULL) {
 		if (!devfs_clone_bitmap_chk(&DEVFS_CLONE_BITMAP(tun), unit)) {
 			devfs_clone_bitmap_set(&DEVFS_CLONE_BITMAP(tun), unit);
 			dev = make_dev(&tun_ops, unit, UID_UUCP, GID_DIALER,
 				       0600, "%s%d", TUN, unit);
 		} else {
 			dev = devfs_find_device_by_name("%s%d", TUN, unit);
+			if (dev == NULL)
+				return (ENOENT);
 		}
-
-		if (dev == NULL)
-			return (ENODEV);
-		if ((sc = tuncreate(dev, TUN_MANUALMAKE)) == NULL)
-			return (ENOMEM);
+		flags = TUN_MANUALMAKE;
+	} else {
+		flags = 0;
 	}
 
+	if ((sc = tuncreate(dev, flags)) == NULL)
+		return (ENOMEM);
+
 	sc->tun_flags |= TUN_CLONE;
+
 	TUNDEBUG(sc->tun_ifp, "clone created, minor = %#x, flags = 0x%x\n",
 		 minor(sc->tun_dev), sc->tun_flags);
 
@@ -405,7 +413,7 @@ tun_clone_create(struct if_clone *ifc __unused, int unit,
 }
 
 static int
-tun_clone_destroy(struct ifnet * ifp)
+tun_clone_destroy(struct ifnet *ifp)
 {
 	struct tun_softc *sc = ifp->if_softc;
 

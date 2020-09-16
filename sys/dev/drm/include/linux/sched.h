@@ -52,6 +52,7 @@
 #include <linux/time.h>
 #include <linux/timer.h>
 #include <linux/hrtimer.h>
+#include <linux/llist.h>
 #include <linux/gfp.h>
 
 #include <asm/processor.h>
@@ -76,6 +77,8 @@ struct seq_file;
 
 #define MAX_SCHEDULE_TIMEOUT    LONG_MAX
 
+#define TASK_COMM_LEN	MAXCOMLEN
+
 struct task_struct {
 	struct thread *dfly_td;
 	volatile long state;
@@ -84,10 +87,12 @@ struct task_struct {
 
 	/* kthread-specific data */
 	unsigned long		kt_flags;
-	struct completion	kt_exited;
 	int			(*kt_fn)(void *data);
 	void			*kt_fndata;
 	int			kt_exitvalue;
+
+	/* executable name without path */
+	char			comm[TASK_COMM_LEN];
 };
 
 #define __set_current_state(state_value)	current->state = (state_value);
@@ -138,8 +143,6 @@ schedule_timeout(signed long timeout)
 		tsleep(current, 0, "lstim", timo);
 		break;
 	default:
-		/* We are supposed to return immediately here */
-		tsleep(current, 0, "lstim", 1);
 		break;
 	}
 
@@ -169,8 +172,6 @@ io_schedule_timeout(signed long timeout)
 {
 	return schedule_timeout(timeout);
 }
-
-#define TASK_COMM_LEN	MAXCOMLEN
 
 /*
  * local_clock: fast time source, monotonic on the same cpu
@@ -276,6 +277,12 @@ static inline int
 pagefault_disabled(void)
 {
 	return (curthread->td_flags & TDF_NOFAULT);
+}
+
+static inline void
+mmgrab(struct mm_struct *mm)
+{
+	atomic_inc(&mm->mm_count);
 }
 
 #endif	/* _LINUX_SCHED_H_ */

@@ -34,11 +34,13 @@
  * Spawn an unpriv process to send/receive common network data.
  * Then drop all privs and start running.
  * Every process aside from the privileged actioneer is chrooted.
+ * All privsep processes ignore signals - only the master process accepts them.
  *
  * dhcpcd will maintain the config file in the chroot, no need to handle
  * this in a script or something.
  */
 
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -63,6 +65,7 @@
 #include "arp.h"
 #include "common.h"
 #include "control.h"
+#include "dev.h"
 #include "dhcp.h"
 #include "dhcp6.h"
 #include "eloop.h"
@@ -70,36 +73,20 @@
 #include "logerr.h"
 #include "privsep.h"
 
+#ifdef HAVE_CAPSICUM
+#include <sys/capsicum.h>
+#include <capsicum_helpers.h>
+#define ps_rights_limit_stdio caph_limit_stdio
+#endif
 #ifdef HAVE_UTIL_H
 #include <util.h>
 #endif
 
 int
-ps_mkdir(char *path)
-{
-	char *slash;
-	bool done;
-
-	slash = path;
-	for (;;) {
-		slash += strspn(slash, "/");
-		slash += strcspn(slash, "/");
-		done = (*slash == '\0');
-		*slash = '\0';
-		if (mkdir(path, 0755) == -1 && errno != EEXIST)
-			return -1;
-		if (done)
-			break;
-		*slash = '/';
-	}
-	return 0;
-}
-
-int
 ps_init(struct dhcpcd_ctx *ctx)
 {
-	char path[PATH_MAX];
-	struct passwd *pw = ctx->ps_user;
+	struct passwd *pw;
+	struct stat st;
 
 	errno = 0;
 	if ((ctx->ps_user = pw = getpwnam(PRIVSEP_USER)) == NULL) {
@@ -113,52 +100,185 @@ ps_init(struct dhcpcd_ctx *ctx)
 		return -1;
 	}
 
-	/* If we pickup the _dhcp user refuse the default directory */
-	if (strcmp(pw->pw_dir, "/var/empty") == 0) {
+	if (stat(pw->pw_dir, &st) == -1 || !S_ISDIR(st.st_mode)) {
 		ctx->options &= ~DHCPCD_PRIVSEP;
-		logerrx("refusing chroot: %s: %s", PRIVSEP_USER, pw->pw_dir);
+		logerrx("refusing chroot: %s: %s",
+		    PRIVSEP_USER, pw->pw_dir);
 		errno = 0;
 		return -1;
 	}
-
-	/* Create the database directory. */
-	if (snprintf(path, sizeof(path), "%s%s", pw->pw_dir, DBDIR) == -1 ||
-	    ps_mkdir(path) == -1 ||
-	    chown(path, pw->pw_uid, pw->pw_gid) == -1 ||
-	    chmod(path, 0755) == -1)
-		logerr("%s: %s", __func__, path);
-
-	/* Ensure we have a localtime to correctly format dates. */
-	if (ps_root_docopychroot(ctx, "/etc/localtime") == -1 && errno!=ENOENT)
-		logerr("%s: %s", __func__, "/etc/localtime");
 
 	ctx->options |= DHCPCD_PRIVSEP;
 	return 0;
 }
 
-int
+static int
 ps_dropprivs(struct dhcpcd_ctx *ctx)
 {
 	struct passwd *pw = ctx->ps_user;
 
 	if (!(ctx->options & DHCPCD_FORKED))
-		logdebugx("chrooting to `%s'", pw->pw_dir);
-
+		logdebugx("chrooting to `%s' as %s", pw->pw_dir, pw->pw_name);
 	if (chroot(pw->pw_dir) == -1)
 		logerr("%s: chroot `%s'", __func__, pw->pw_dir);
 	if (chdir("/") == -1)
 		logerr("%s: chdir `/'", __func__);
 
-	if (setgroups(1, &pw->pw_gid) == -1 ||
+	if ((setgroups(1, &pw->pw_gid) == -1 ||
 	     setgid(pw->pw_gid) == -1 ||
-	     setuid(pw->pw_uid) == -1)
+	     setuid(pw->pw_uid) == -1) &&
+	     (errno != EPERM || ctx->options & DHCPCD_FORKED))
 	{
 		logerr("failed to drop privileges");
 		return -1;
 	}
 
+	struct rlimit rzero = { .rlim_cur = 0, .rlim_max = 0 };
+
+	if (ctx->ps_control_pid != getpid()) {
+		/* Prohibit new files, sockets, etc */
+#if defined(__linux__) || defined(__sun) || defined(__OpenBSD__)
+		/*
+		 * If poll(2) is called with nfds > RLIMIT_NOFILE
+		 * then it returns EINVAL.
+		 * This blows.
+		 * Do the best we can and limit to what we need.
+		 * An attacker could potentially close a file and
+		 * open a new one still, but that cannot be helped.
+		 */
+		unsigned long maxfd;
+		maxfd = (unsigned long)eloop_event_count(ctx->eloop);
+		if (IN_PRIVSEP_SE(ctx))
+			maxfd++; /* XXX why? */
+
+		struct rlimit rmaxfd = {
+		    .rlim_cur = maxfd,
+		    .rlim_max = maxfd
+		};
+		if (setrlimit(RLIMIT_NOFILE, &rmaxfd) == -1)
+			logerr("setrlimit RLIMIT_NOFILE");
+#else
+		if (setrlimit(RLIMIT_NOFILE, &rzero) == -1)
+			logerr("setrlimit RLIMIT_NOFILE");
+#endif
+	}
+
+	/* Prohibit writing to files.
+	 * Obviously this won't work if we are using a logfile
+	 * or redirecting stderr to a file. */
+	if (ctx->logfile == NULL) {
+		if (setrlimit(RLIMIT_FSIZE, &rzero) == -1)
+			logerr("setrlimit RLIMIT_FSIZE");
+	}
+
+#ifdef RLIMIT_NPROC
+	/* Prohibit forks */
+	if (setrlimit(RLIMIT_NPROC, &rzero) == -1)
+		logerr("setrlimit RLIMIT_NPROC");
+#endif
+
 	return 0;
 }
+
+static int
+ps_setbuf0(int fd, int ctl, int minlen)
+{
+	int len;
+	socklen_t slen;
+
+	slen = sizeof(len);
+	if (getsockopt(fd, SOL_SOCKET, ctl, &len, &slen) == -1)
+		return -1;
+
+#ifdef __linux__
+	len /= 2;
+#endif
+	if (len >= minlen)
+		return 0;
+
+	return setsockopt(fd, SOL_SOCKET, ctl, &minlen, sizeof(minlen));
+}
+
+static int
+ps_setbuf(int fd)
+{
+	/* Ensure we can receive a fully sized privsep message.
+	 * Double the send buffer. */
+	int minlen = (int)sizeof(struct ps_msg);
+
+	if (ps_setbuf0(fd, SO_RCVBUF, minlen) == -1 ||
+	    ps_setbuf0(fd, SO_SNDBUF, minlen * 2) == -1)
+	{
+		logerr(__func__);
+		return -1;
+	}
+	return 0;
+}
+
+int
+ps_setbuf_fdpair(int fd[])
+{
+
+	if (ps_setbuf(fd[0]) == -1 || ps_setbuf(fd[1]) == -1)
+		return -1;
+	return 0;
+}
+
+#ifdef PRIVSEP_RIGHTS
+int
+ps_rights_limit_ioctl(int fd)
+{
+	cap_rights_t rights;
+
+	cap_rights_init(&rights, CAP_IOCTL);
+	if (cap_rights_limit(fd, &rights) == -1 && errno != ENOSYS)
+		return -1;
+	return 0;
+}
+
+int
+ps_rights_limit_fd_fctnl(int fd)
+{
+	cap_rights_t rights;
+
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_EVENT,
+	    CAP_ACCEPT, CAP_FCNTL);
+	if (cap_rights_limit(fd, &rights) == -1 && errno != ENOSYS)
+		return -1;
+	return 0;
+}
+
+int
+ps_rights_limit_fd(int fd)
+{
+	cap_rights_t rights;
+
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_EVENT, CAP_SHUTDOWN);
+	if (cap_rights_limit(fd, &rights) == -1 && errno != ENOSYS)
+		return -1;
+	return 0;
+}
+
+int
+ps_rights_limit_fd_rdonly(int fd)
+{
+	cap_rights_t rights;
+
+	cap_rights_init(&rights, CAP_READ, CAP_EVENT);
+	if (cap_rights_limit(fd, &rights) == -1 && errno != ENOSYS)
+		return -1;
+	return 0;
+}
+
+int
+ps_rights_limit_fdpair(int fd[])
+{
+
+	if (ps_rights_limit_fd(fd[0]) == -1 || ps_rights_limit_fd(fd[1]) == -1)
+		return -1;
+	return 0;
+}
+#endif
 
 pid_t
 ps_dostart(struct dhcpcd_ctx *ctx,
@@ -167,15 +287,23 @@ ps_dostart(struct dhcpcd_ctx *ctx,
     void *recv_ctx, int (*callback)(void *), void (*signal_cb)(int, void *),
     unsigned int flags)
 {
-	int stype;
 	int fd[2];
 	pid_t pid;
 
-	stype = SOCK_CLOEXEC | SOCK_NONBLOCK;
-	if (socketpair(AF_UNIX, SOCK_DGRAM | stype, 0, fd) == -1) {
-		logerr("socketpair");
+	if (xsocketpair(AF_UNIX, SOCK_DGRAM | SOCK_CXNB, 0, fd) == -1) {
+		logerr("%s: socketpair", __func__);
 		return -1;
 	}
+	if (ps_setbuf_fdpair(fd) == -1) {
+		logerr("%s: ps_setbuf_fdpair", __func__);
+		return -1;
+	}
+#ifdef PRIVSEP_RIGHTS
+	if (ps_rights_limit_fdpair(fd) == -1) {
+		logerr("%s: ps_rights_limit_fdpair", __func__);
+		return -1;
+	}
+#endif
 
 	switch (pid = fork()) {
 	case -1:
@@ -189,8 +317,9 @@ ps_dostart(struct dhcpcd_ctx *ctx,
 		*priv_pid = pid;
 		*priv_fd = fd[0];
 		close(fd[1]);
-		if (recv_unpriv_msg != NULL &&
-		    eloop_event_add(ctx->eloop, *priv_fd,
+		if (recv_unpriv_msg == NULL)
+			;
+		else if (eloop_event_add(ctx->eloop, *priv_fd,
 		    recv_unpriv_msg, recv_ctx) == -1)
 		{
 			logerr("%s: eloop_event_add", __func__);
@@ -214,6 +343,14 @@ ps_dostart(struct dhcpcd_ctx *ctx,
 			close(ctx->ps_root_fd);
 			ctx->ps_root_fd = -1;
 		}
+
+#ifdef PRIVSEP_RIGHTS
+		/* We cannot limit the root process in any way. */
+		if (ps_rights_limit_stdio() == -1) {
+			logerr("ps_rights_limit_stdio");
+			goto errexit;
+		}
+#endif
 	}
 
 	if (priv_fd != &ctx->ps_inet_fd && ctx->ps_inet_fd != -1) {
@@ -221,12 +358,8 @@ ps_dostart(struct dhcpcd_ctx *ctx,
 		ctx->ps_inet_fd = -1;
 	}
 
-	if (eloop_signal_set_cb(ctx->eloop,
-	    dhcpcd_signals, dhcpcd_signals_len, signal_cb, ctx) == -1)
-	{
-		logerr("%s: eloop_signal_set_cb", __func__);
-		goto errexit;
-	}
+	eloop_signal_set_cb(ctx->eloop,
+	    dhcpcd_signals, dhcpcd_signals_len, signal_cb, ctx);
 
 	/* ctx->sigset aready has the initial sigmask set in main() */
 	if (eloop_signal_mask(ctx->eloop, NULL) == -1) {
@@ -243,11 +376,6 @@ ps_dostart(struct dhcpcd_ctx *ctx,
 	if (callback(recv_ctx) == -1)
 		goto errexit;
 
-	if (!(ctx->options & (DHCPCD_TEST | DHCPCD_DEBUG))) {
-		freopen(_PATH_DEVNULL, "w", stdout);
-		freopen(_PATH_DEVNULL, "w", stderr);
-	}
-
 	if (flags & PSF_DROPPRIVS)
 		ps_dropprivs(ctx);
 
@@ -256,55 +384,37 @@ ps_dostart(struct dhcpcd_ctx *ctx,
 errexit:
 	/* Failure to start root or inet processes is fatal. */
 	if (priv_fd == &ctx->ps_root_fd || priv_fd == &ctx->ps_inet_fd)
-		ps_sendcmd(ctx, *priv_fd, PS_STOP, 0, NULL, 0);
+		(void)ps_sendcmd(ctx, *priv_fd, PS_STOP, 0, NULL, 0);
 	shutdown(*priv_fd, SHUT_RDWR);
 	*priv_fd = -1;
+	eloop_exit(ctx->eloop, EXIT_FAILURE);
 	return -1;
 }
 
 int
 ps_dostop(struct dhcpcd_ctx *ctx, pid_t *pid, int *fd)
 {
-	int status;
+	int err = 0;
 
 #ifdef PRIVSEP_DEBUG
-	logdebugx("%s: pid %d fd %d", __func__, *pid, *fd);
+	logdebugx("%s: pid=%d fd=%d", __func__, *pid, *fd);
 #endif
-	if (*pid == 0)
-		return 0;
-	eloop_event_delete(ctx->eloop, *fd);
-	if (ps_sendcmd(ctx, *fd, PS_STOP, 0, NULL, 0) == -1 &&
-	    errno != ECONNRESET)
-		logerr(__func__);
-	if (shutdown(*fd, SHUT_RDWR) == -1 && errno != ENOTCONN)
-		logerr(__func__);
-	close(*fd);
-	*fd = -1;
-	/* We won't have permission for all processes .... */
-#if 0
-	if (kill(*pid, SIGTERM) == -1)
-		logerr(__func__);
-#endif
-	status = 0;
-	/* Wait for the process to finish */
-	while (waitpid(*pid, &status, 0) == -1) {
-		if (errno != EINTR) {
-			logerr("%s: waitpid", __func__);
-			status = 0;
-			break;
+
+	if (*fd != -1) {
+		eloop_event_delete(ctx->eloop, *fd);
+		if (ps_sendcmd(ctx, *fd, PS_STOP, 0, NULL, 0) == -1) {
+			logerr(__func__);
+			err = -1;
 		}
-#ifdef PRIVSEP_DEBUG
-		else
-			logerr("%s: waitpid ", __func__);
-#endif
+		(void)shutdown(*fd, SHUT_RDWR);
+		close(*fd);
+		*fd = -1;
 	}
+
+	/* Don't wait for the process as it may not respond to the shutdown
+	 * request. We'll reap the process on receipt of SIGCHLD. */
 	*pid = 0;
-
-#ifdef PRIVSEP_DEBUG
-	logdebugx("%s: status %d", __func__, status);
-#endif
-
-	return status;
+	return err;
 }
 
 int
@@ -316,6 +426,7 @@ ps_start(struct dhcpcd_ctx *ctx)
 
 	switch (pid = ps_root_start(ctx)) {
 	case -1:
+		logerr("ps_root_start");
 		return -1;
 	case 0:
 		return 0;
@@ -325,8 +436,8 @@ ps_start(struct dhcpcd_ctx *ctx)
 
 	/* No point in spawning the generic network listener if we're
 	 * not going to use it. */
-	if (!(ctx->options & (DHCPCD_MASTER | DHCPCD_IPV6RS)))
-		goto started;
+	if (!(ctx->options & (DHCPCD_MASTER | DHCPCD_IPV6)))
+		goto started_net;
 
 	switch (pid = ps_inet_start(ctx)) {
 	case -1:
@@ -339,8 +450,60 @@ ps_start(struct dhcpcd_ctx *ctx)
 		logdebugx("spawned network proxy on PID %d", pid);
 	}
 
-started:
+started_net:
+	if (!(ctx->options & DHCPCD_TEST)) {
+		switch (pid = ps_ctl_start(ctx)) {
+		case -1:
+			return -1;
+		case 0:
+			return 0;
+		default:
+			logdebugx("spawned controller proxy on PID %d", pid);
+		}
+	}
+
+#ifdef ARC4RANDOM_H
+	/* Seed the random number generator early incase it needs /dev/urandom
+	 * which won't be available in the chroot. */
+	arc4random();
+#endif
+
 	return 1;
+}
+
+int
+ps_mastersandbox(struct dhcpcd_ctx *ctx)
+{
+
+	if (ps_dropprivs(ctx) == -1) {
+		logerr("%s: ps_dropprivs", __func__);
+		return -1;
+	}
+
+#ifdef PRIVSEP_RIGHTS
+	if ((ctx->pf_inet_fd != -1 &&
+	    ps_rights_limit_ioctl(ctx->pf_inet_fd) == -1) ||
+	    (ctx->link_fd != -1 && ps_rights_limit_fd(ctx->link_fd) == -1) ||
+	     ps_rights_limit_stdio() == -1)
+	{
+		logerr("%s: cap_rights_limit", __func__);
+		return -1;
+	}
+#endif
+#ifdef HAVE_CAPSICUM
+	if (cap_enter() == -1 && errno != ENOSYS) {
+		logerr("%s: cap_enter", __func__);
+		return -1;
+	}
+#endif
+#ifdef HAVE_PLEDGE
+	if (pledge("stdio route", NULL) == -1) {
+		logerr("%s: pledge", __func__);
+		return -1;
+	}
+#endif
+
+	return 0;
 }
 
 int
@@ -352,6 +515,10 @@ ps_stop(struct dhcpcd_ctx *ctx)
 	    ctx->options & DHCPCD_FORKED ||
 	    ctx->eloop == NULL)
 		return 0;
+
+	r = ps_ctl_stop(ctx);
+	if (r != 0)
+		ret = r;
 
 	r = ps_inet_stop(ctx);
 	if (r != 0)
@@ -372,14 +539,6 @@ ps_stop(struct dhcpcd_ctx *ctx)
 void
 ps_freeprocess(struct ps_process *psp)
 {
-#ifdef INET
-	struct ipv4_state *istate = IPV4_STATE(&psp->psp_ifp);
-
-	if (istate != NULL) {
-		free(istate->buffer);
-		free(istate);
-	}
-#endif
 
 	TAILQ_REMOVE(&psp->psp_ctx->ps_processes, psp, next);
 	if (psp->psp_fd != -1) {
@@ -390,6 +549,10 @@ ps_freeprocess(struct ps_process *psp)
 		eloop_event_delete(psp->psp_ctx->eloop, psp->psp_work_fd);
 		close(psp->psp_work_fd);
 	}
+#ifdef INET
+	if (psp->psp_bpf != NULL)
+		bpf_close(psp->psp_bpf);
+#endif
 	free(psp);
 }
 
@@ -450,26 +613,24 @@ ps_unrollmsg(struct msghdr *msg, struct ps_msghdr *psm,
 	return 0;
 }
 
-
 ssize_t
 ps_sendpsmmsg(struct dhcpcd_ctx *ctx, int fd,
     struct ps_msghdr *psm, const struct msghdr *msg)
 {
-	assert(msg == NULL || msg->msg_iovlen == 1);
-
 	struct iovec iov[] = {
 		{ .iov_base = UNCONST(psm), .iov_len = sizeof(*psm) },
 		{ .iov_base = NULL, },	/* name */
 		{ .iov_base = NULL, },	/* control */
-		{ .iov_base = NULL, },	/* payload */
+		{ .iov_base = NULL, },	/* payload 1 */
+		{ .iov_base = NULL, },	/* payload 2 */
+		{ .iov_base = NULL, },	/* payload 3 */
 	};
-	int iovlen = __arraycount(iov);
+	int iovlen;
 	ssize_t len;
 
 	if (msg != NULL) {
 		struct iovec *iovp = &iov[1];
-
-		assert(msg->msg_iovlen == 1);
+		int i;
 
 		psm->ps_namelen = msg->msg_namelen;
 		psm->ps_controllen = (socklen_t)msg->msg_controllen;
@@ -479,19 +640,28 @@ ps_sendpsmmsg(struct dhcpcd_ctx *ctx, int fd,
 		iovp++;
 		iovp->iov_base = msg->msg_control;
 		iovp->iov_len = msg->msg_controllen;
-		iovp++;
-		iovp->iov_base = msg->msg_iov[0].iov_base;
-		iovp->iov_len = msg->msg_iov[0].iov_len;
-		iovlen = __arraycount(iov);
+		iovlen = 3;
+
+		for (i = 0; i < (int)msg->msg_iovlen; i++) {
+			if ((size_t)(iovlen + i) > __arraycount(iov)) {
+				errno =	ENOBUFS;
+				return -1;
+			}
+			iovp++;
+			iovp->iov_base = msg->msg_iov[i].iov_base;
+			iovp->iov_len = msg->msg_iov[i].iov_len;
+		}
+		iovlen += i;
 	} else
 		iovlen = 1;
 
 	len = writev(fd, iov, iovlen);
-#ifdef PRIVSEP_DEBUG
-	logdebugx("%s: %zd", __func__, len);
-#endif
-	if ((len == -1 || len == 0) && ctx->options & DHCPCD_FORKED)
-		eloop_exit(ctx->eloop, len == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+	if (len == -1) {
+		logerr(__func__);
+		if (ctx->options & DHCPCD_FORKED &&
+		    !(ctx->options & DHCPCD_PRIVSEPROOT))
+			eloop_exit(ctx->eloop, EXIT_FAILURE);
+	}
 	return len;
 }
 
@@ -511,18 +681,19 @@ ps_sendpsmdata(struct dhcpcd_ctx *ctx, int fd,
 
 
 ssize_t
-ps_sendmsg(struct dhcpcd_ctx *ctx, int fd, uint8_t cmd, unsigned long flags,
+ps_sendmsg(struct dhcpcd_ctx *ctx, int fd, uint16_t cmd, unsigned long flags,
     const struct msghdr *msg)
 {
-	assert(msg->msg_iovlen == 1);
-
 	struct ps_msghdr psm = {
 		.ps_cmd = cmd,
 		.ps_flags = flags,
 		.ps_namelen = msg->msg_namelen,
 		.ps_controllen = (socklen_t)msg->msg_controllen,
-		.ps_datalen = msg->msg_iov[0].iov_len,
 	};
+	size_t i;
+
+	for (i = 0; i < (size_t)msg->msg_iovlen; i++)
+		psm.ps_datalen += msg->msg_iov[i].iov_len;
 
 #if 0	/* For debugging structure padding. */
 	logerrx("psa.family %lu %zu", offsetof(struct ps_addr, psa_family), sizeof(psm.ps_id.psi_addr.psa_family));
@@ -553,7 +724,7 @@ ps_sendmsg(struct dhcpcd_ctx *ctx, int fd, uint8_t cmd, unsigned long flags,
 }
 
 ssize_t
-ps_sendcmd(struct dhcpcd_ctx *ctx, int fd, uint8_t cmd, unsigned long flags,
+ps_sendcmd(struct dhcpcd_ctx *ctx, int fd, uint16_t cmd, unsigned long flags,
     const void *data, size_t len)
 {
 	struct ps_msghdr psm = {
@@ -571,7 +742,7 @@ ps_sendcmd(struct dhcpcd_ctx *ctx, int fd, uint8_t cmd, unsigned long flags,
 }
 
 static ssize_t
-ps_sendcmdmsg(int fd, uint8_t cmd, const struct msghdr *msg)
+ps_sendcmdmsg(int fd, uint16_t cmd, const struct msghdr *msg)
 {
 	struct ps_msghdr psm = { .ps_cmd = cmd };
 	uint8_t data[PS_BUFLEN], *p = data;
@@ -614,7 +785,7 @@ nobufs:
 }
 
 ssize_t
-ps_recvmsg(struct dhcpcd_ctx *ctx, int rfd, uint8_t cmd, int wfd)
+ps_recvmsg(struct dhcpcd_ctx *ctx, int rfd, uint16_t cmd, int wfd)
 {
 	struct sockaddr_storage ss = { .ss_family = AF_UNSPEC };
 	uint8_t controlbuf[sizeof(struct sockaddr_storage)] = { 0 };
@@ -629,21 +800,25 @@ ps_recvmsg(struct dhcpcd_ctx *ctx, int rfd, uint8_t cmd, int wfd)
 	};
 
 	ssize_t len = recvmsg(rfd, &msg, 0);
-#ifdef PRIVSEP_DEBUG
-	logdebugx("%s: recv fd %d, %zd bytes", __func__, rfd, len);
-#endif
-	if ((len == -1 || len == 0) && ctx->options & DHCPCD_FORKED) {
-		eloop_exit(ctx->eloop, len == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+
+	if (len == -1)
+		logerr("%s: recvmsg", __func__);
+	if (len == -1 || len == 0) {
+		if (ctx->options & DHCPCD_FORKED &&
+		    !(ctx->options & DHCPCD_PRIVSEPROOT))
+			eloop_exit(ctx->eloop,
+			    len == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
 		return len;
 	}
 
 	iov[0].iov_len = (size_t)len;
 	len = ps_sendcmdmsg(wfd, cmd, &msg);
-#ifdef PRIVSEP_DEBUG
-	logdebugx("%s: send fd %d, %zu bytes", __func__, wfd, len);
-#endif
-	if ((len == -1 || len == 0) && ctx->options & DHCPCD_FORKED)
-		eloop_exit(ctx->eloop, len == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+	if (len == -1) {
+		logerr("ps_sendcmdmsg");
+		if (ctx->options & DHCPCD_FORKED &&
+		    !(ctx->options & DHCPCD_PRIVSEPROOT))
+			eloop_exit(ctx->eloop, EXIT_FAILURE);
+	}
 	return len;
 }
 
@@ -664,8 +839,6 @@ ps_recvpsmsg(struct dhcpcd_ctx *ctx, int fd,
 	logdebugx("%s: %zd", __func__, len);
 #endif
 
-	if (len == -1 && (errno == ECONNRESET || errno == EBADF))
-		len = 0;
 	if (len == -1 || len == 0)
 		stop = true;
 	else {
@@ -686,6 +859,9 @@ ps_recvpsmsg(struct dhcpcd_ctx *ctx, int fd,
 		logdebugx("process %d stopping", getpid());
 #endif
 		ps_free(ctx);
+#ifdef PLUGIN_DEV
+		dev_stop(ctx);
+#endif
 		eloop_exit(ctx->eloop, len != -1 ? EXIT_SUCCESS : EXIT_FAILURE);
 		return len;
 	}
@@ -693,6 +869,9 @@ ps_recvpsmsg(struct dhcpcd_ctx *ctx, int fd,
 
 	if (ps_unrollmsg(&msg, &psm.psm_hdr, psm.psm_data, dlen) == -1)
 		return -1;
+
+	if (callback == NULL)
+		return 0;
 
 	errno = 0;
 	return callback(cbctx, &psm.psm_hdr, &msg);

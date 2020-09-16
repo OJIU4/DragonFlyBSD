@@ -49,7 +49,6 @@ MODULE_FIRMWARE("radeon/tahiti_ce.bin");
 MODULE_FIRMWARE("radeon/tahiti_mc.bin");
 MODULE_FIRMWARE("radeon/tahiti_rlc.bin");
 MODULE_FIRMWARE("radeon/tahiti_smc.bin");
-MODULE_FIRMWARE("radeon/tahiti_k_smc.bin");
 
 MODULE_FIRMWARE("radeon/PITCAIRN_pfp.bin");
 MODULE_FIRMWARE("radeon/PITCAIRN_me.bin");
@@ -114,6 +113,9 @@ MODULE_FIRMWARE("radeon/hainan_mc.bin");
 MODULE_FIRMWARE("radeon/hainan_rlc.bin");
 MODULE_FIRMWARE("radeon/hainan_smc.bin");
 MODULE_FIRMWARE("radeon/hainan_k_smc.bin");
+MODULE_FIRMWARE("radeon/banks_k_2_smc.bin");
+
+MODULE_FIRMWARE("radeon/si58_mc.bin");
 
 static u32 si_get_cu_active_bitmap(struct radeon_device *rdev, u32 se, u32 sh);
 static void si_pcie_gen3_enable(struct radeon_device *rdev);
@@ -1640,15 +1642,14 @@ static int si_init_microcode(struct radeon_device *rdev)
 	int err;
 	int new_fw = 0;
 	bool new_smc = false;
+	bool si58_fw = false;
+	bool banks2_fw = false;
 
 	DRM_DEBUG("\n");
 
 	switch (rdev->family) {
 	case CHIP_TAHITI:
 		chip_name = "TAHITI";
-		/* XXX: figure out which Tahitis need the new ucode */
-		if (0)
-			new_smc = true;
 		new_chip_name = "tahiti";
 		pfp_req_size = SI_PFP_UCODE_SIZE * 4;
 		me_req_size = SI_PM4_UCODE_SIZE * 4;
@@ -1660,12 +1661,9 @@ static int si_init_microcode(struct radeon_device *rdev)
 		break;
 	case CHIP_PITCAIRN:
 		chip_name = "PITCAIRN";
-		if ((rdev->pdev->revision == 0x81) ||
-		    (rdev->pdev->device == 0x6810) ||
-		    (rdev->pdev->device == 0x6811) ||
-		    (rdev->pdev->device == 0x6816) ||
-		    (rdev->pdev->device == 0x6817) ||
-		    (rdev->pdev->device == 0x6806))
+		if ((rdev->pdev->revision == 0x81) &&
+		    ((rdev->pdev->device == 0x6810) ||
+		     (rdev->pdev->device == 0x6811)))
 			new_smc = true;
 		new_chip_name = "pitcairn";
 		pfp_req_size = SI_PFP_UCODE_SIZE * 4;
@@ -1678,15 +1676,15 @@ static int si_init_microcode(struct radeon_device *rdev)
 		break;
 	case CHIP_VERDE:
 		chip_name = "VERDE";
-		if ((rdev->pdev->revision == 0x81) ||
-		    (rdev->pdev->revision == 0x83) ||
-		    (rdev->pdev->revision == 0x87) ||
-		    (rdev->pdev->device == 0x6820) ||
-		    (rdev->pdev->device == 0x6821) ||
-		    (rdev->pdev->device == 0x6822) ||
-		    (rdev->pdev->device == 0x6823) ||
-		    (rdev->pdev->device == 0x682A) ||
-		    (rdev->pdev->device == 0x682B))
+		if (((rdev->pdev->device == 0x6820) &&
+		     ((rdev->pdev->revision == 0x81) ||
+		      (rdev->pdev->revision == 0x83))) ||
+		    ((rdev->pdev->device == 0x6821) &&
+		     ((rdev->pdev->revision == 0x83) ||
+		      (rdev->pdev->revision == 0x87))) ||
+		    ((rdev->pdev->revision == 0x87) &&
+		     ((rdev->pdev->device == 0x6823) ||
+		      (rdev->pdev->device == 0x682b))))
 			new_smc = true;
 		new_chip_name = "verde";
 		pfp_req_size = SI_PFP_UCODE_SIZE * 4;
@@ -1699,12 +1697,13 @@ static int si_init_microcode(struct radeon_device *rdev)
 		break;
 	case CHIP_OLAND:
 		chip_name = "OLAND";
-		if ((rdev->pdev->revision == 0xC7) ||
-		    (rdev->pdev->revision == 0x80) ||
-		    (rdev->pdev->revision == 0x81) ||
-		    (rdev->pdev->revision == 0x83) ||
-		    (rdev->pdev->device == 0x6604) ||
-		    (rdev->pdev->device == 0x6605))
+		if (((rdev->pdev->revision == 0x81) &&
+		     ((rdev->pdev->device == 0x6600) ||
+		      (rdev->pdev->device == 0x6604) ||
+		      (rdev->pdev->device == 0x6605) ||
+		      (rdev->pdev->device == 0x6610))) ||
+		    ((rdev->pdev->revision == 0x83) &&
+		     (rdev->pdev->device == 0x6610)))
 			new_smc = true;
 		new_chip_name = "oland";
 		pfp_req_size = SI_PFP_UCODE_SIZE * 4;
@@ -1716,13 +1715,17 @@ static int si_init_microcode(struct radeon_device *rdev)
 		break;
 	case CHIP_HAINAN:
 		chip_name = "HAINAN";
-		if ((rdev->pdev->revision == 0x81) ||
-		    (rdev->pdev->revision == 0x83) ||
-		    (rdev->pdev->revision == 0xC3) ||
-		    (rdev->pdev->device == 0x6664) ||
-		    (rdev->pdev->device == 0x6665) ||
-		    (rdev->pdev->device == 0x6667))
+		if (((rdev->pdev->revision == 0x81) &&
+		     (rdev->pdev->device == 0x6660)) ||
+		    ((rdev->pdev->revision == 0x83) &&
+		     ((rdev->pdev->device == 0x6660) ||
+		      (rdev->pdev->device == 0x6663) ||
+		      (rdev->pdev->device == 0x6665) ||
+		      (rdev->pdev->device == 0x6667))))
 			new_smc = true;
+		else if ((rdev->pdev->revision == 0xc3) &&
+			 (rdev->pdev->device == 0x6665))
+			banks2_fw = true;
 		new_chip_name = "hainan";
 		pfp_req_size = SI_PFP_UCODE_SIZE * 4;
 		me_req_size = SI_PM4_UCODE_SIZE * 4;
@@ -1733,6 +1736,10 @@ static int si_init_microcode(struct radeon_device *rdev)
 		break;
 	default: BUG();
 	}
+
+	/* this memory configuration requires special firmware */
+	if (((RREG32(MC_SEQ_MISC0) & 0xff000000) >> 24) == 0x58)
+		si58_fw = true;
 
 	DRM_INFO("Loading %s Microcode\n", new_chip_name);
 
@@ -1753,8 +1760,7 @@ static int si_init_microcode(struct radeon_device *rdev)
 	} else {
 		err = radeon_ucode_validate(rdev->pfp_fw);
 		if (err) {
-			printk(KERN_ERR
-			       "si_cp: validation failed for firmware \"%s\"\n",
+			pr_err("si_cp: validation failed for firmware \"%s\"\n",
 			       fw_name);
 			goto out;
 		} else {
@@ -1837,7 +1843,10 @@ static int si_init_microcode(struct radeon_device *rdev)
 		}
 	}
 
-	ksnprintf(fw_name, sizeof(fw_name), "radeonkmsfw_%s_mc", new_chip_name);
+	if (si58_fw)
+		snprintf(fw_name, sizeof(fw_name), "radeonkmsfw_si58_mc");
+	else
+		snprintf(fw_name, sizeof(fw_name), "radeonkmsfw_%s_mc", new_chip_name);
 	err = request_firmware(&rdev->mc_fw, fw_name, rdev->dev);
 	if (err) {
 		ksnprintf(fw_name, sizeof(fw_name), "radeonkmsfw_%s_mc2", chip_name);
@@ -1859,8 +1868,7 @@ static int si_init_microcode(struct radeon_device *rdev)
 	} else {
 		err = radeon_ucode_validate(rdev->mc_fw);
 		if (err) {
-			printk(KERN_ERR
-			       "si_cp: validation failed for firmware \"%s\"\n",
+			pr_err("si_cp: validation failed for firmware \"%s\"\n",
 			       fw_name);
 			goto out;
 		} else {
@@ -1868,7 +1876,9 @@ static int si_init_microcode(struct radeon_device *rdev)
 		}
 	}
 
-	if (new_smc)
+	if (banks2_fw)
+		snprintf(fw_name, sizeof(fw_name), "radeonkmsfw_banks_k_2_smc");
+	else if (new_smc)
 		ksnprintf(fw_name, sizeof(fw_name), "radeonkmsfw_%s_k_smc", new_chip_name);
 	else
 		ksnprintf(fw_name, sizeof(fw_name), "radeonkmsfw_%s_smc", new_chip_name);
@@ -1904,7 +1914,7 @@ static int si_init_microcode(struct radeon_device *rdev)
 	if (new_fw == 0) {
 		rdev->new_fw = false;
 	} else if (new_fw < 6) {
-		printk(KERN_ERR "si_fw: mixing new and old firmware!\n");
+		pr_err("si_fw: mixing new and old firmware!\n");
 		err = -EINVAL;
 	} else {
 		rdev->new_fw = true;
@@ -1912,8 +1922,7 @@ static int si_init_microcode(struct radeon_device *rdev)
 out:
 	if (err) {
 		if (err != -EINVAL)
-			printk(KERN_ERR
-			       "si_cp: Failed to load firmware \"%s\"\n",
+			pr_err("si_cp: Failed to load firmware \"%s\"\n",
 			       fw_name);
 		release_firmware(rdev->pfp_fw);
 		rdev->pfp_fw = NULL;
@@ -2220,23 +2229,10 @@ static u32 dce6_latency_watermark(struct dce6_wm_params *wm)
 	a.full = dfixed_const(available_bandwidth);
 	b.full = dfixed_const(wm->num_heads);
 	a.full = dfixed_div(a, b);
+	tmp = div_u64((u64) dmif_size * (u64) wm->disp_clk, mc_latency + 512);
+	tmp = min(dfixed_trunc(a), tmp);
 
-	b.full = dfixed_const(mc_latency + 512);
-	c.full = dfixed_const(wm->disp_clk);
-	b.full = dfixed_div(b, c);
-
-	c.full = dfixed_const(dmif_size);
-	b.full = dfixed_div(c, b);
-
-	tmp = min(dfixed_trunc(a), dfixed_trunc(b));
-
-	b.full = dfixed_const(1000);
-	c.full = dfixed_const(wm->disp_clk);
-	b.full = dfixed_div(c, b);
-	c.full = dfixed_const(wm->bytes_per_pixel);
-	b.full = dfixed_mul(b, c);
-
-	lb_fill_bw = min(tmp, dfixed_trunc(b));
+	lb_fill_bw = min(tmp, wm->disp_clk * wm->bytes_per_pixel / 1000);
 
 	a.full = dfixed_const(max_src_lines_per_dst_line * wm->src_width * wm->bytes_per_pixel);
 	b.full = dfixed_const(1000);
@@ -2303,7 +2299,7 @@ static void dce6_program_watermarks(struct radeon_device *rdev,
 	struct drm_display_mode *mode = &radeon_crtc->base.mode;
 	struct dce6_wm_params wm_low, wm_high;
 	u32 dram_channels;
-	u32 pixel_period;
+	u32 active_time;
 	u32 line_time = 0;
 	u32 latency_watermark_a = 0, latency_watermark_b = 0;
 	u32 priority_a_mark = 0, priority_b_mark = 0;
@@ -2313,8 +2309,11 @@ static void dce6_program_watermarks(struct radeon_device *rdev,
 	fixed20_12 a, b, c;
 
 	if (radeon_crtc->base.enabled && num_heads && mode) {
-		pixel_period = 1000000 / (u32)mode->clock;
-		line_time = min((u32)mode->crtc_htotal * pixel_period, (u32)65535);
+		active_time = (u32) div_u64((u64)mode->crtc_hdisplay * 1000000,
+					    (u32)mode->clock);
+		line_time = (u32) div_u64((u64)mode->crtc_htotal * 1000000,
+					  (u32)mode->clock);
+		line_time = min(line_time, (u32)65535);
 		priority_a_cnt = 0;
 		priority_b_cnt = 0;
 
@@ -2336,7 +2335,7 @@ static void dce6_program_watermarks(struct radeon_device *rdev,
 
 		wm_high.disp_clk = mode->clock;
 		wm_high.src_width = mode->crtc_hdisplay;
-		wm_high.active_time = mode->crtc_hdisplay * pixel_period;
+		wm_high.active_time = active_time;
 		wm_high.blank_time = line_time - wm_high.active_time;
 		wm_high.interlaced = false;
 		if (mode->flags & DRM_MODE_FLAG_INTERLACE)
@@ -2363,7 +2362,7 @@ static void dce6_program_watermarks(struct radeon_device *rdev,
 
 		wm_low.disp_clk = mode->clock;
 		wm_low.src_width = mode->crtc_hdisplay;
-		wm_low.active_time = mode->crtc_hdisplay * pixel_period;
+		wm_low.active_time = active_time;
 		wm_low.blank_time = line_time - wm_low.active_time;
 		wm_low.interlaced = false;
 		if (mode->flags & DRM_MODE_FLAG_INTERLACE)

@@ -394,6 +394,9 @@ dev/raid/hptrr/hptrr_config.c	optional hptrr
 dev/misc/aperf/aperf.c		optional aperf
 dev/powermng/clockmod/clockmod.c	optional clockmod
 dev/powermng/perfbias/perfbias.c	optional perfbias
+dev/powermng/amdsmn/amdsmn.c	optional amdsmn
+dev/powermng/amdsmn/amdsmn.c	optional amdtemp
+dev/powermng/amdtemp/amdtemp.c	optional amdtemp
 dev/powermng/corepower/corepower.c	optional corepower
 dev/powermng/coretemp/coretemp.c	optional coretemp
 dev/powermng/kate/kate.c	optional kate pci
@@ -1236,8 +1239,11 @@ dev/netif/sn/if_sn.c		optional sn
 dev/netif/sn/if_sn_pccard.c	optional sn pccard
 dev/misc/snp/snp.c		optional snp
 dev/crypto/tpm/tpm.c		optional tpm
+dev/crypto/tpm/tpm20.c		optional tpm
 dev/crypto/tpm/tpm_acpi.c	optional tpm acpi
+dev/crypto/tpm/tpm_crb.c	optional tpm acpi
 dev/crypto/tpm/tpm_isa.c	optional tpm isa
+dev/crypto/tpm/tpm_tis.c	optional tpm acpi
 bus/iicbus/iicbb.c	optional iicbb
 bus/iicbus/iicbb_if.m		optional iicbb
 bus/iicbus/iicsmb.c		optional iicsmb
@@ -2280,14 +2286,16 @@ dev/drm/drm_dp_aux_dev.c		optional drm compile-with "${NORMAL_C} -include $S/dev
 dev/drm/drm_dp_dual_mode_helper.c	optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_dp_helper.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_dp_mst_topology.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
-dev/drm/drm_dragonfly.c			optional drm
+dev/drm/drm_dragonfly.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_drv.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/drm_dumb_buffers.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_edid.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_edid_load.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_encoder.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_encoder_slave.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_fb_helper.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
-dev/drm/drm_fops.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/drm_fb_helper.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h -include $S/dev/drm/kbuild_modname_drm.h ${WERROR}"
+dev/drm/drm_file.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_fourcc.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_framebuffer.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_gem.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2299,6 +2307,7 @@ dev/drm/drm_lock.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/
 dev/drm/drm_memory.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_mipi_dsi.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_mm.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/drm_mode_config.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_mode_object.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_modes.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_modeset_helper.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2308,11 +2317,13 @@ dev/drm/drm_pci.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/k
 dev/drm/drm_plane.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_plane_helper.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_prime.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/drm_print.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_probe_helper.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_property.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_rect.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_scatter.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
-dev/drm/drm_sysctl.c			optional drm
+dev/drm/drm_scdc_helper.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/drm_sysctl.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_sysfs.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_vm.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/drm_vma_manager.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2332,6 +2343,9 @@ dev/drm/linux_irq.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm
 dev/drm/linux_kobject.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/linux_kthread.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/linux_list_sort.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/linux_printf.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/linux_radix.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/linux_rcu.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/linux_reservation.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/linux_scatterlist.c		optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/linux_sched.c			optional drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2361,34 +2375,41 @@ dev/drm/i915/i915_cmd_parser.c		optional i915 drm compile-with "${NORMAL_C} -inc
 dev/drm/i915/i915_drv.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_batch_pool.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_gem_clflush.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_context.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_dmabuf.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_execbuffer.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
-dev/drm/i915/i915_gem_fence.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_gem_fence_reg.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_evict.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_gtt.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_gem_internal.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_stolen.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_render_state.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_request.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_shrinker.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_tiling.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_gem_timeline.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_gem_userptr.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_guc_submission.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
-dev/drm/i915/i915_irq.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_irq.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h -include $S/dev/drm/kbuild_modname_i915.h ${WERROR}"
 dev/drm/i915/i915_memcpy.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_mm.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_oa_hsw.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_params.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_pci.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_perf.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_suspend.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_sw_fence.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_sysfs.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/i915_vgpu.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/i915_vma.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_acpi.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_atomic.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_atomic_plane.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_audio.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_bios.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_breadcrumbs.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_cdclk.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_color.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_crt.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_csr.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2403,8 +2424,8 @@ dev/drm/i915/intel_dp_link_training.c	optional i915 drm compile-with "${NORMAL_C
 dev/drm/i915/intel_dp_mst.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_dsi.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_dsi_dcs_backlight.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
-dev/drm/i915/intel_dsi_panel_vbt.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_dsi_pll.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_dsi_vbt.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_dvo.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_engine_cs.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_fbdev.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2412,9 +2433,13 @@ dev/drm/i915/intel_fbc.c		optional i915 drm compile-with "${NORMAL_C} -include $
 dev/drm/i915/intel_fifo_underrun.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_frontbuffer.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_guc_loader.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_guc_log.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_hangcheck.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_hdmi.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_hotplug.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_huc.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_i2c.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_lpe_audio.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_lrc.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_lspcon.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_mocs.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2422,7 +2447,7 @@ dev/drm/i915/intel_lvds.c		optional i915 drm compile-with "${NORMAL_C} -include 
 dev/drm/i915/intel_modes.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_opregion.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_overlay.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
-dev/drm/i915/intel_panel.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_panel.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h -include $S/dev/drm/kbuild_modname_i915.h ${WERROR}"
 dev/drm/i915/intel_pm.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_psr.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_renderstate_gen6.c	optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2435,6 +2460,7 @@ dev/drm/i915/intel_sdvo.c		optional i915 drm compile-with "${NORMAL_C} -include 
 dev/drm/i915/intel_sideband.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_sprite.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_tv.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
+dev/drm/i915/intel_uc.c			optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/i915/intel_uncore.c		optional i915 drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/radeon/atom.c			optional radeon drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
 dev/drm/radeon/atombios_crtc.c		optional radeon drm compile-with "${NORMAL_C} -include $S/dev/drm/kconfig.h ${WERROR}"
@@ -2953,6 +2979,7 @@ bus/u4b/input/ukbd.c			optional ukbd
 bus/u4b/input/ums.c			optional ums
 bus/u4b/input/uep.c			optional uep
 bus/u4b/input/uhid.c			optional uhid
+bus/u4b/input/wsp.c			optional wsp
 #
 # USB quirks
 #

@@ -84,18 +84,15 @@ int hammer2_cluster_data_read = 4;	/* physical read-ahead */
 int hammer2_cluster_write = 0;		/* physical write clustering */
 int hammer2_dedup_enable = 1;
 int hammer2_always_compress = 0;	/* always try to compress */
-int hammer2_inval_enable = 0;
 int hammer2_flush_pipe = 100;
 int hammer2_dio_count;
 int hammer2_dio_limit = 256;
 int hammer2_bulkfree_tps = 5000;
 int hammer2_worker_rmask = 3;
 long hammer2_chain_allocs;
-long hammer2_chain_frees;
 long hammer2_limit_dirty_chains;
 long hammer2_limit_dirty_inodes;
 long hammer2_count_modified_chains;
-long hammer2_iod_invals;
 long hammer2_iod_file_read;
 long hammer2_iod_meta_read;
 long hammer2_iod_indr_read;
@@ -109,8 +106,11 @@ long hammer2_iod_meta_write;
 long hammer2_iod_indr_write;
 long hammer2_iod_fmap_write;
 long hammer2_iod_volu_write;
-long hammer2_iod_inode_creates;
-long hammer2_iod_inode_deletes;
+static long hammer2_iod_inode_creates;
+static long hammer2_iod_inode_deletes;
+
+long hammer2_process_icrc32;
+long hammer2_process_xxhash64;
 
 MALLOC_DECLARE(M_HAMMER2_CBUFFER);
 MALLOC_DEFINE(M_HAMMER2_CBUFFER, "HAMMER2-compbuffer",
@@ -138,8 +138,6 @@ SYSCTL_INT(_vfs_hammer2, OID_AUTO, dedup_enable, CTLFLAG_RW,
 	   &hammer2_dedup_enable, 0, "");
 SYSCTL_INT(_vfs_hammer2, OID_AUTO, always_compress, CTLFLAG_RW,
 	   &hammer2_always_compress, 0, "");
-SYSCTL_INT(_vfs_hammer2, OID_AUTO, inval_enable, CTLFLAG_RW,
-	   &hammer2_inval_enable, 0, "");
 SYSCTL_INT(_vfs_hammer2, OID_AUTO, flush_pipe, CTLFLAG_RW,
 	   &hammer2_flush_pipe, 0, "");
 SYSCTL_INT(_vfs_hammer2, OID_AUTO, worker_rmask, CTLFLAG_RW,
@@ -148,8 +146,6 @@ SYSCTL_INT(_vfs_hammer2, OID_AUTO, bulkfree_tps, CTLFLAG_RW,
 	   &hammer2_bulkfree_tps, 0, "");
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, chain_allocs, CTLFLAG_RW,
 	   &hammer2_chain_allocs, 0, "");
-SYSCTL_LONG(_vfs_hammer2, OID_AUTO, chain_frees, CTLFLAG_RW,
-	   &hammer2_chain_frees, 0, "");
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, limit_dirty_chains, CTLFLAG_RW,
 	   &hammer2_limit_dirty_chains, 0, "");
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, limit_dirty_inodes, CTLFLAG_RW,
@@ -161,8 +157,6 @@ SYSCTL_INT(_vfs_hammer2, OID_AUTO, dio_count, CTLFLAG_RD,
 SYSCTL_INT(_vfs_hammer2, OID_AUTO, dio_limit, CTLFLAG_RW,
 	   &hammer2_dio_limit, 0, "");
 
-SYSCTL_LONG(_vfs_hammer2, OID_AUTO, iod_invals, CTLFLAG_RW,
-	   &hammer2_iod_invals, 0, "");
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, iod_file_read, CTLFLAG_RW,
 	   &hammer2_iod_file_read, 0, "");
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, iod_meta_read, CTLFLAG_RW,
@@ -195,8 +189,6 @@ SYSCTL_LONG(_vfs_hammer2, OID_AUTO, iod_inode_creates, CTLFLAG_RW,
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, iod_inode_deletes, CTLFLAG_RW,
 	   &hammer2_iod_inode_deletes, 0, "");
 
-long hammer2_process_icrc32;
-long hammer2_process_xxhash64;
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, process_icrc32, CTLFLAG_RW,
 	   &hammer2_process_icrc32, 0, "");
 SYSCTL_LONG(_vfs_hammer2, OID_AUTO, process_xxhash64, CTLFLAG_RW,
@@ -493,7 +485,7 @@ hammer2_pfsalloc(hammer2_chain_t *chain,
 	j = iroot->cluster.nchains;
 
 	if (j == HAMMER2_MAXCLUSTER) {
-		kprintf("hammer2_mount: cluster full!\n");
+		kprintf("hammer2_pfsalloc: cluster full!\n");
 		/* XXX fatal error? */
 	} else {
 		KKASSERT(chain->pmp == NULL);
@@ -2925,16 +2917,6 @@ hammer2_vfs_checkexp(struct mount *mp, struct sockaddr *nam,
 /*
  * Support code for hammer2_vfs_mount().  Read, verify, and install the volume
  * header into the HMP
- *
- * XXX read four volhdrs and use the one with the highest TID whos CRC
- *     matches.
- *
- * XXX check iCRCs.
- *
- * XXX For filesystems w/ less than 4 volhdrs, make sure to not write to
- *     nonexistant locations.
- *
- * XXX Record selected volhdr and ring updates to each of 4 volhdrs
  */
 static
 int

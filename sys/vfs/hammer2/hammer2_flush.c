@@ -760,9 +760,6 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 				chain->bref.keybits,
 				(uintmax_t)chain->bref.data_off);
 		}
-		if (hammer2_debug & 0x2000) {
-			Debugger("Flush hell");
-		}
 
 		/*
 		 * Update chain CRCs for flush.
@@ -886,7 +883,6 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 			 * flushed (but the kernel is free to flush it before
 			 * then, as well).
 			 */
-			KKASSERT((chain->flags & HAMMER2_CHAIN_EMBEDDED) == 0);
 			hammer2_chain_setcheck(chain, chain->data);
 			break;
 		case HAMMER2_BREF_TYPE_DIRENT:
@@ -895,7 +891,6 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 			 * the filename for filenames <= 64 bytes, don't blow
 			 * it up!
 			 */
-			KKASSERT((chain->flags & HAMMER2_CHAIN_EMBEDDED) == 0);
 			if (chain->bytes)
 				hammer2_chain_setcheck(chain, chain->data);
 			break;
@@ -923,11 +918,9 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 				/* can't be mounted as a PFS */
 			}
 
-			KKASSERT((chain->flags & HAMMER2_CHAIN_EMBEDDED) == 0);
 			hammer2_chain_setcheck(chain, chain->data);
 			break;
 		default:
-			KKASSERT(chain->flags & HAMMER2_CHAIN_EMBEDDED);
 			panic("hammer2_flush_core: unsupported "
 			      "embedded bref %d",
 			      chain->bref.type);

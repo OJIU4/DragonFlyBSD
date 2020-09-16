@@ -116,16 +116,14 @@ s/\$//g
 		printf " *               by running make sysent in the same directory.\n" > sysun
 		printf " */\n\n" > sysun
 		printf "union sysunion {\n" > sysun
-		printf "#ifdef _KERNEL /* header only applies in kernel */\n" > sysun
-		#printf "\tstruct\tlwkt_msg lmsg;\n" > sysun
-		printf "\tstruct\tsysmsg sysmsg;\n" > sysun
-		printf "#endif\n" > sysun
 
 		printf "\n/* The casts are bogus but will do for now. */\n" > sysent
 		printf "struct sysent %s[] = {\n",switchname > sysent
 
 		printf "\n#ifdef _KERNEL\n\n" > sysdcl
 		printf "\n#ifdef _KERNEL\n\n" > syscompatdcl
+		printf "struct sysmsg;\n\n" > sysdcl
+		printf "struct sysmsg;\n\n" > syscompatdcl
 	}
 	NF == 0 || $1 ~ /^;/ {
 		next
@@ -222,13 +220,8 @@ s/\$//g
 		usefuncname=$f
 		if (funcalias == "")
 			funcalias = funcname
-		if (argalias == "") {
+		if (argalias == "")
 			argalias = funcname "_args"
-			if ($2 == "COMPAT") {
-				argalias = "o" argalias
-				usefuncname = "sys_o" funcname
-			}
-		}
 		f++
 
 		if ($f != "(")
@@ -273,9 +266,6 @@ s/\$//g
 			if (argc != 0 && $2 != "NOARGS" && $2 != "NOPROTO") {
 				printf("\tstruct\t%s %s;\n", argalias, usefuncname) > sysun
 				printf("struct\t%s {\n", argalias) > sysarg
-				printf("#ifdef _KERNEL\n") > sysarg
-				printf("\tstruct sysmsg sysmsg;\n") > sysarg
-				printf("#endif\n") > sysarg
 				for (i = 1; i <= argc; i++)
 					printf("\t%s\t%s;\tchar %s_[PAD_(%s)];\n",
 					    argtype[i], argname[i],
@@ -286,9 +276,6 @@ s/\$//g
 			    $2 != "NODEF") {
 				printf("\tstruct\t%s %s;\n", argalias, usefuncname) > sysun
 				printf("struct\t%s {\n", argalias) > sysarg
-				printf("#ifdef _KERNEL\n") > sysarg
-				printf("\tstruct sysmsg sysmsg;\n") > sysarg
-				printf("#endif\n") > sysarg
 				printf("\tregister_t dummy;\n") > sysarg
 				printf("};\n") > sysarg
 			}
@@ -297,7 +284,7 @@ s/\$//g
 		    (funcname != "nosys" || !nosys)) || \
 		    (funcname == "lkmnosys" && !lkmnosys) || \
 		    funcname == "lkmressys") {
-			printf("%s\tsys_%s (struct %s *)",
+			printf("%s\tsys_%s (struct sysmsg *sysmsg, const struct %s *)",
 			    rettype, funcname, argalias) > sysdcl
 			printf(";\n") > sysdcl
 		}
@@ -326,60 +313,6 @@ s/\$//g
 		syscall++
 		next
 	}
-	$2 == "COMPAT" || $2 == "CPT_NOA" {
-		ncompat++
-		parseline()
-		if (argc != 0 && $2 != "CPT_NOA") {
-			printf("struct\t%s {\n", argalias) > syscompat
-			printf("#ifdef _KERNEL\n") > syscompat
-			printf("\tstruct sysmsg sysmsg;\n") > syscompat
-			printf("#endif\n") > syscompat
-			for (i = 1; i <= argc; i++)
-				printf("\t%s\t%s;\tchar %s_[PAD_(%s)];\n",
-				    argtype[i], argname[i],
-				    argname[i], argtype[i]) > syscompat
-			printf("};\n") > syscompat
-		}
-		else if($2 != "CPT_NOA") {
-			printf("\tstruct\t%s %s;\n", argalias, usefuncname) > sysun
-			printf("struct\t%s {\n", argalias) > sysarg
-			printf("#ifdef _KERNEL\n") > sysarg
-			printf("\tstruct sysmsg sysmsg;\n") > sysarg
-			printf("#endif\n") > sysarg
-			printf("\tregister_t dummy;\n") > sysarg
-			printf("};\n") > sysarg
-		}
-		printf("%s\tsys_o%s (struct %s *);\n",
-		    rettype, funcname, argalias) > syscompatdcl
-		printf("\t{ compat(%s,%s) },",
-		    argssize, funcname) > sysent
-		align_sysent_comment(8 + 9 + \
-		    length(argssize) + 1 + length(funcname) + 4)
-		printf("/* %d = old %s */\n", syscall, funcalias) > sysent
-		printf("\t\"old.%s\",\t\t/* %d = old %s */\n",
-		    funcalias, syscall, funcalias) > sysnames
-		printf("\t\t\t\t/* %d is old %s */\n",
-		    syscall, funcalias) > syshdr
-		syscall++
-		next
-	}
-	$2 == "LIBCOMPAT" {
-		ncompat++
-		parseline()
-		printf("%s\tsys_o%s();\n", rettype, funcname) > syscompatdcl
-		printf("\t{ compat(%s,%s) },",
-		    argssize, funcname) > sysent
-		align_sysent_comment(8 + 9 + \
-		    length(argssize) + 1 + length(funcname) + 4)
-		printf("/* %d = old %s */\n", syscall, funcalias) > sysent
-		printf("\t\"old.%s\",\t\t/* %d = old %s */\n",
-		    funcalias, syscall, funcalias) > sysnames
-		printf("#define\t%s%s\t%d\t/* compatibility; still used by libc */\n",
-		    syscallprefix, funcalias, syscall) > syshdr
-		printf(" \\\n\t%s.o", funcalias) > sysmk
-		syscall++
-		next
-	}
 	$2 == "OBSOL" {
 		printf("\t{ 0, (sy_call_t *)sys_nosys },") > sysent
 		align_sysent_comment(37)
@@ -404,7 +337,7 @@ s/\$//g
 		exit 1
 	}
 	END {
-		printf "\n#define AS(name) ((sizeof(struct name) - sizeof(struct sysmsg)) / sizeof(register_t))\n" > sysinc
+		printf "\n#define AS(name) (sizeof(struct name) / sizeof(register_t))\n" > sysinc
 		if (ncompat != 0)
 			printf "#define compat(n, name) 0, (sy_call_t *)sys_nosys\n" > sysinc
 

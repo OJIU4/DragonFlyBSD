@@ -97,7 +97,7 @@ VNODEOP_DESC_INIT(open);
 VNODEOP_DESC_INIT(close);
 VNODEOP_DESC_INIT(access);
 VNODEOP_DESC_INIT(getattr);
-VNODEOP_DESC_INIT(getattr_quick);
+VNODEOP_DESC_INIT(getattr_lite);
 VNODEOP_DESC_INIT(setattr);
 VNODEOP_DESC_INIT(read);
 VNODEOP_DESC_INIT(write);
@@ -373,20 +373,20 @@ vop_getattr(struct vop_ops *ops, struct vnode *vp, struct vattr *vap,
  * MPSAFE
  */
 int
-vop_getattr_quick(struct vop_ops *ops, struct vnode *vp, struct vattr *vap)
+vop_getattr_lite(struct vop_ops *ops, struct vnode *vp, struct vattr_lite *lvap)
 {
-	struct vop_getattr_args ap;
+	struct vop_getattr_lite_args ap;
 	VFS_MPLOCK_DECLARE;
 	int error;
 
-	ap.a_head.a_desc = &vop_getattr_quick_desc;
+	ap.a_head.a_desc = &vop_getattr_lite_desc;
 	ap.a_head.a_ops = ops;
 	ap.a_vp = vp;
-	ap.a_vap = vap;
+	ap.a_lvap = lvap;
 	ap.a_fp = NULL;
 
 	VFS_MPLOCK_FLAG(vp->v_mount, MNTK_GA_MPSAFE);
-	DO_OPS(ops, error, &ap, vop_getattr_quick);
+	DO_OPS(ops, error, &ap, vop_getattr_lite);
 	VFS_MPUNLOCK();
 
 	return(error);
@@ -1088,7 +1088,7 @@ vop_getpages(struct vop_ops *ops, struct vnode *vp, vm_page_t *m, int count,
  */
 int
 vop_putpages(struct vop_ops *ops, struct vnode *vp, vm_page_t *m, int count,
-	int sync, int *rtvals, vm_ooffset_t offset)
+	int flags, int *rtvals, vm_ooffset_t offset)
 {
 	struct vop_putpages_args ap;
 	VFS_MPLOCK_DECLARE;
@@ -1099,7 +1099,7 @@ vop_putpages(struct vop_ops *ops, struct vnode *vp, vm_page_t *m, int count,
 	ap.a_vp = vp;
 	ap.a_m = m;
 	ap.a_count = count;
-	ap.a_sync = sync;
+	ap.a_flags = flags;
 	ap.a_rtvals = rtvals;
 	ap.a_offset = offset;
 
@@ -1790,11 +1790,11 @@ vop_getattr_ap(struct vop_getattr_args *ap)
 }
 
 int
-vop_getattr_quick_ap(struct vop_getattr_args *ap)
+vop_getattr_lite_ap(struct vop_getattr_lite_args *ap)
 {
 	int error;
 
-	DO_OPS(ap->a_head.a_ops, error, ap, vop_getattr_quick);
+	DO_OPS(ap->a_head.a_ops, error, ap, vop_getattr_lite);
 	return(error);
 }
 

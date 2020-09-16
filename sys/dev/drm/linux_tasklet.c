@@ -43,19 +43,19 @@
 
 struct tasklet_entry {
 	struct tasklet_struct *ts;
-	SLIST_ENTRY(tasklet_entry) tasklet_entries;
+	STAILQ_ENTRY(tasklet_entry) tasklet_entries;
 };
 
 static struct lock tasklet_lock = LOCK_INITIALIZER("dltll", 0, LK_CANRECURSE);
 
 static struct thread *tasklet_td = NULL;
-SLIST_HEAD(tasklet_list_head, tasklet_entry) tlist = SLIST_HEAD_INITIALIZER(tlist);
-SLIST_HEAD(tasklet_hi_list_head, tasklet_entry) tlist_hi = SLIST_HEAD_INITIALIZER(tlist_hi);
+STAILQ_HEAD(tasklet_list_head, tasklet_entry) tlist = STAILQ_HEAD_INITIALIZER(tlist);
+STAILQ_HEAD(tasklet_hi_list_head, tasklet_entry) tlist_hi = STAILQ_HEAD_INITIALIZER(tlist_hi);
 
 static int tasklet_pending = 0;
 
 #define PROCESS_TASKLET_LIST(which_list) do { \
-	SLIST_FOREACH_MUTABLE(te, &which_list, tasklet_entries, tmp_te) { \
+	STAILQ_FOREACH_MUTABLE(te, &which_list, tasklet_entries, tmp_te) { \
 		struct tasklet_struct *t = te->ts;			\
 									\
 		/*							\
@@ -64,10 +64,13 @@ static int tasklet_pending = 0;
 		   already been scheduled.				\
 		*/							\
 		if (test_bit(TASKLET_IS_DYING, &t->state)) {		\
-			kprintf("tasklet: killing %p\n", t);		\
-			SLIST_REMOVE(&which_list, te, tasklet_entry, tasklet_entries); \
+			STAILQ_REMOVE(&which_list, te, tasklet_entry, tasklet_entries); \
 			kfree(te);					\
 		}							\
+									\
+		/* This tasklet is not enabled, try the next one */	\
+		if (atomic_read(&t->count) != 0)			\
+			continue;					\
 									\
 		/* This tasklet is not scheduled, try the next one */	\
 		if (!test_bit(TASKLET_STATE_SCHED, &t->state))		\
@@ -116,54 +119,40 @@ tasklet_init(struct tasklet_struct *t,
 	t->state = 0;
 	t->func = func;
 	t->data = data;
+	atomic_set(&t->count, 0);
 }
+
+#define TASKLET_SCHEDULE_COMMON(t, list) do {			\
+	struct tasklet_entry *te;				\
+								\
+	lockmgr(&tasklet_lock, LK_EXCLUSIVE);			\
+	set_bit(TASKLET_STATE_SCHED, &t->state);		\
+								\
+	STAILQ_FOREACH(te, &(list), tasklet_entries) {		\
+		if (te->ts == t)				\
+			goto found_and_done;			\
+	}							\
+								\
+	te = kzalloc(sizeof(struct tasklet_entry), M_WAITOK);	\
+	te->ts = t;						\
+	STAILQ_INSERT_TAIL(&(list), te, tasklet_entries);	\
+								\
+found_and_done:							\
+	tasklet_pending = 1;					\
+	wakeup(&tasklet_runner);				\
+	lockmgr(&tasklet_lock, LK_RELEASE);			\
+} while (0)
 
 void
 tasklet_schedule(struct tasklet_struct *t)
 {
-	struct tasklet_entry *te;
-
-	lockmgr(&tasklet_lock, LK_EXCLUSIVE);
-	set_bit(TASKLET_STATE_SCHED, &t->state);
-
-	SLIST_FOREACH(te, &tlist, tasklet_entries) {
-		if (te->ts == t)
-			goto found_and_done;
-	}
-
-	te = kzalloc(sizeof(struct tasklet_entry), M_WAITOK);
-	te->ts = t;
-	SLIST_INSERT_HEAD(&tlist, te, tasklet_entries);
-
-found_and_done:
-	/* schedule the runner thread on the local cpu core */
-	tasklet_pending = 1;
-	wakeup(&tasklet_runner);
-	lockmgr(&tasklet_lock, LK_RELEASE);
+	TASKLET_SCHEDULE_COMMON(t, tlist);
 }
 
 void
 tasklet_hi_schedule(struct tasklet_struct *t)
 {
-	struct tasklet_entry *te;
-
-	lockmgr(&tasklet_lock, LK_EXCLUSIVE);
-	set_bit(TASKLET_STATE_SCHED, &t->state);
-
-	SLIST_FOREACH(te, &tlist_hi, tasklet_entries) {
-		if (te->ts == t)
-			goto found_and_done;
-	}
-
-	te = kzalloc(sizeof(struct tasklet_entry), M_WAITOK);
-	te->ts = t;
-	SLIST_INSERT_HEAD(&tlist_hi, te, tasklet_entries);
-
-found_and_done:
-	/* schedule the runner thread on the local cpu core */
-	tasklet_pending = 1;
-	wakeup(&tasklet_runner);
-	lockmgr(&tasklet_lock, LK_RELEASE);
+	TASKLET_SCHEDULE_COMMON(t, tlist_hi);
 }
 
 void

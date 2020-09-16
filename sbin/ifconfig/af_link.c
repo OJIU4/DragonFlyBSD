@@ -32,12 +32,12 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
-#include <net/route.h>		/* for RTX_IFA */
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/ethernet.h>
 
 #include <err.h>
+#include <ifaddrs.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,17 +47,24 @@
 static struct ifreq link_ridreq;
 
 static void
-link_status(int s __unused, const struct rt_addrinfo *info)
+link_status(int s __unused, const struct ifaddrs *ifa)
 {
 	const struct sockaddr_dl *sdl =
-		(const struct sockaddr_dl *) info->rti_info[RTAX_IFA];
+		(const struct sockaddr_dl *)ifa->ifa_addr;
 
 	if (sdl != NULL && sdl->sdl_alen > 0) {
 		if (sdl->sdl_type == IFT_ETHER &&
-		    sdl->sdl_alen == ETHER_ADDR_LEN)
-			printf("\tether %s\n",
-			    ether_ntoa((const struct ether_addr *)LLADDR(sdl)));
-		else {
+		    sdl->sdl_alen == ETHER_ADDR_LEN) {
+			char *ether_addr = ether_ntoa(
+				(const struct ether_addr *)LLADDR(sdl));
+
+			if (f_ether != NULL && strcmp(f_ether, "dash") == 0) {
+				char *fchar = ether_addr;
+				while ((fchar = strchr(fchar, ':')) != NULL)
+					*fchar = '-';
+			}
+			printf("\tether %s\n", ether_addr);
+		} else {
 			int n = sdl->sdl_nlen > 0 ? sdl->sdl_nlen + 1 : 0;
 
 			printf("\tlladdr %s\n", link_ntoa(sdl) + n);

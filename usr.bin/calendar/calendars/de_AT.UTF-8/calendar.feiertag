@@ -18,7 +18,7 @@ LANG=de_AT.UTF-8
 01/06		Heilige 3 Könige
 Easter-2	Karfreitag
 Easter		Ostersonntag
-Easter+1 	Ostermontag
+Easter+1	Ostermontag
 Easter+49	Pfingstsonntag
 Easter+50	Pfingstmontag
 Easter+39	Christi Himmelfahrt
@@ -39,12 +39,12 @@ Easter+60	Fronleichnam
 02/14			Valentinstag
 Easter-46		Aschermittwoch
 Easter-7		Palmsonntag
-Nov Sun+3		Totensonntag
-Nov Sun+4		1. Advent
-Dec Sun+1		2. Advent
+Advent-7		Totensonntag
+Advent			1. Advent
+Advent+7		2. Advent
 12/06			Nikolaus
-Dec Sun+2		3. Advent
-Dec Sun+3		4. Advent
+Advent+14		3. Advent
+Advent+21		4. Advent
 
 /* Jahreszeiten */
 03/20*	Frühlingsanfang
@@ -57,6 +57,6 @@ Dec Sun+3		4. Advent
 10/SundayLast	Ende der Sommerzeit
 
 /* Blumenverkäufer */
-May Sun+2 	Muttertag
+May Sun+2	Muttertag
 
 #endif /*! _de_AT_UTF_8_feiertag_ */

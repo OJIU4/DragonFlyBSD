@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2015 Michael Neumann
+ * Copyright (c) 2020 François Tigeot <ftigeot@wolfpond.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,7 +39,7 @@ struct seq_file {
 	size_t	size;
 };
 
-#define seq_printf(m, args...) ksnprintf((m)->buf, (m)->size, args)
+void seq_printf(struct seq_file *m, const char *f, ...);
 
 #define seq_puts(m, str)	ksnprintf((m)->buf, (m)->size, str)
 

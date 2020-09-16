@@ -37,6 +37,8 @@
 #ifndef _CPU_TSS_H_
 #define _CPU_TSS_H_
 
+#include <sys/types.h>
+
 /*
  * x86_64 Context Data Type
  *

@@ -60,7 +60,7 @@ static int ttm_bo_vm_fault_idle(struct ttm_buffer_object *bo,
 	/*
 	 * Quick non-stalling check for idle.
 	 */
-	if (fence_is_signaled(bo->moving))
+	if (dma_fence_is_signaled(bo->moving))
 		goto out_clear;
 
 	/*
@@ -72,17 +72,18 @@ static int ttm_bo_vm_fault_idle(struct ttm_buffer_object *bo,
 		if (vmf->flags & FAULT_FLAG_RETRY_NOWAIT)
 			goto out_unlock;
 
-#if 0
+		ttm_bo_reference(bo);
 		up_read(&vma->vm_mm->mmap_sem);
-#endif
-		(void) fence_wait(bo->moving, true);
+		(void) dma_fence_wait(bo->moving, true);
+		ttm_bo_unreserve(bo);
+		ttm_bo_unref(&bo);
 		goto out_unlock;
 	}
 
 	/*
 	 * Ordinary wait.
 	 */
-	ret = fence_wait(bo->moving, true);
+	ret = dma_fence_wait(bo->moving, true);
 	if (unlikely(ret != 0)) {
 		ret = (ret != -ERESTARTSYS) ? VM_FAULT_SIGBUS :
 			VM_FAULT_NOPAGE;
@@ -90,7 +91,7 @@ static int ttm_bo_vm_fault_idle(struct ttm_buffer_object *bo,
 	}
 
 out_clear:
-	fence_put(bo->moving);
+	dma_fence_put(bo->moving);
 	bo->moving = NULL;
 
 out_unlock:
@@ -121,7 +122,7 @@ static int ttm_bo_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	struct page *page;
 	int ret;
 	int i;
-	unsigned long address = (unsigned long)vmf->virtual_address;
+	unsigned long address = vmf->address;
 	int retval = VM_FAULT_NOPAGE;
 	struct ttm_mem_type_manager *man =
 		&bdev->man[bo->mem.mem_type];
@@ -140,8 +141,10 @@ static int ttm_bo_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 		if (vmf->flags & FAULT_FLAG_ALLOW_RETRY) {
 			if (!(vmf->flags & FAULT_FLAG_RETRY_NOWAIT)) {
+				ttm_bo_reference(bo);
 				up_read(&vma->vm_mm->mmap_sem);
 				(void) ttm_bo_wait_unreserved(bo);
+				ttm_bo_unref(&bo);
 			}
 
 			return VM_FAULT_RETRY;
@@ -187,6 +190,13 @@ static int ttm_bo_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	ret = ttm_bo_vm_fault_idle(bo, vma, vmf);
 	if (unlikely(ret != 0)) {
 		retval = ret;
+
+		if (retval == VM_FAULT_RETRY &&
+		    !(vmf->flags & FAULT_FLAG_RETRY_NOWAIT)) {
+			/* The BO has already been unreserved. */
+			return retval;
+		}
+
 		goto out_unlock;
 	}
 
@@ -338,6 +348,14 @@ static struct ttm_buffer_object *ttm_bo_vm_lookup(struct ttm_bo_device *bdev,
 	return bo;
 }
 
+unsigned long ttm_bo_default_io_mem_pfn(struct ttm_buffer_object *bo,
+					unsigned long page_offset)
+{
+	return ((bo->mem.bus.base + bo->mem.bus.offset) >> PAGE_SHIFT)
+		+ page_offset;
+}
+EXPORT_SYMBOL(ttm_bo_default_io_mem_pfn);
+
 int ttm_bo_mmap(struct file *filp, struct vm_area_struct *vma,
 		struct ttm_bo_device *bdev)
 {
@@ -401,13 +419,6 @@ EXPORT_SYMBOL(ttm_fbdev_mmap);
  */
 
 #include "opt_vm.h"
-
-#include <vm/vm.h>
-#include <vm/vm_page.h>
-#include <linux/errno.h>
-#include <linux/export.h>
-
-#include <vm/vm_page2.h>
 
 /*
  * NOTE: This code is fragile.  This code can only be entered with *mres
@@ -487,9 +498,7 @@ retry:
 
 		if (vmf->flags & FAULT_FLAG_ALLOW_RETRY || 1) {
 			if (!(vmf->flags & FAULT_FLAG_RETRY_NOWAIT)) {
-#if 0
 				up_read(&vma->vm_mm->mmap_sem);
-#endif
 				(void) ttm_bo_wait_unreserved(bo);
 			}
 

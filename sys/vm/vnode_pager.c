@@ -73,16 +73,16 @@
 
 #include <vm/vm_page2.h>
 
-static void vnode_pager_dealloc (vm_object_t);
-static int vnode_pager_getpage (vm_object_t, vm_page_t *, int);
-static void vnode_pager_putpages (vm_object_t, vm_page_t *, int, int, int *);
-static boolean_t vnode_pager_haspage (vm_object_t, vm_pindex_t);
+static	pgo_dealloc_t		vnode_pager_dealloc;
+static	pgo_getpage_t		vnode_pager_getpage;
+static	pgo_putpages_t		vnode_pager_putpages;
+static	pgo_haspage_t		vnode_pager_haspage;
 
 struct pagerops vnodepagerops = {
-	vnode_pager_dealloc,
-	vnode_pager_getpage,
-	vnode_pager_putpages,
-	vnode_pager_haspage
+	.pgo_dealloc =		vnode_pager_dealloc,
+	.pgo_getpage =		vnode_pager_getpage,
+	.pgo_putpages =		vnode_pager_putpages,
+	.pgo_haspage =		vnode_pager_haspage
 };
 
 static struct krate vbadrate = { 1 };
@@ -630,7 +630,7 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *mpp, int bytecount,
  */
 static void
 vnode_pager_putpages(vm_object_t object, vm_page_t *m, int count,
-		     int sync, int *rtvals)
+		     int flags, int *rtvals)
 {
 	int rtval;
 	struct vnode *vp;
@@ -650,17 +650,17 @@ vnode_pager_putpages(vm_object_t object, vm_page_t *m, int count,
 
 	if ((vmstats.v_free_count + vmstats.v_cache_count) <
 	    vmstats.v_pageout_free_min) {
-		sync |= OBJPC_SYNC;
+		flags |= OBJPC_SYNC;
 	}
 
 	/*
 	 * Call device-specific putpages function
 	 */
 	vp = object->handle;
-	rtval = VOP_PUTPAGES(vp, m, bytes, sync, rtvals, 0);
+	rtval = VOP_PUTPAGES(vp, m, bytes, flags, rtvals, 0);
 	if (rtval == EOPNOTSUPP) {
 	    kprintf("vnode_pager: *** WARNING *** stale FS putpages\n");
-	    rtval = vnode_pager_generic_putpages( vp, m, bytes, sync, rtvals);
+	    rtval = vnode_pager_generic_putpages( vp, m, bytes, flags, rtvals);
 	}
 }
 
@@ -743,11 +743,11 @@ vnode_pager_generic_putpages(struct vnode *vp, vm_page_t *m, int bytecount,
 	 * the system decides how to cluster.
 	 */
 	ioflags = IO_VMIO;
-	if (flags & (VM_PAGER_PUT_SYNC | VM_PAGER_PUT_INVAL))
+	if (flags & (OBJPC_SYNC | OBJPC_INVAL))
 		ioflags |= IO_SYNC;
-	else if ((flags & VM_PAGER_CLUSTER_OK) == 0)
+	else if ((flags & OBJPC_CLUSTER_OK) == 0)
 		ioflags |= IO_ASYNC;
-	ioflags |= (flags & VM_PAGER_PUT_INVAL) ? IO_INVAL: 0;
+	ioflags |= (flags & OBJPC_INVAL) ? IO_INVAL: 0;
 	ioflags |= IO_SEQMAX << IO_SEQSHIFT;
 
 	aiov.iov_base = (caddr_t) 0;

@@ -21,12 +21,13 @@ SRCS	= \
 	drm_dp_mst_topology.c \
 	drm_dragonfly.c \
 	drm_drv.c \
+	drm_dumb_buffers.c \
 	drm_edid.c \
 	drm_edid_load.c \
 	drm_encoder.c \
 	drm_encoder_slave.c \
 	drm_fb_helper.c \
-	drm_fops.c \
+	drm_file.c \
 	drm_fourcc.c \
 	drm_framebuffer.c \
 	drm_gem.c \
@@ -38,6 +39,7 @@ SRCS	= \
 	drm_memory.c \
 	drm_mipi_dsi.c \
 	drm_mm.c \
+	drm_mode_config.c \
 	drm_mode_object.c \
 	drm_modes.c \
 	drm_modeset_lock.c \
@@ -47,10 +49,12 @@ SRCS	= \
 	drm_plane.c \
 	drm_plane_helper.c \
 	drm_prime.c \
+	drm_print.c \
 	drm_probe_helper.c \
 	drm_property.c \
 	drm_rect.c \
 	drm_scatter.c \
+	drm_scdc_helper.c \
 	drm_sysctl.c \
 	drm_sysfs.c \
 	drm_vm.c \
@@ -63,14 +67,17 @@ SRCS	= \
 	linux_dmi.c \
 	linux_fence.c \
 	linux_hdmi.c \
-	linux_i2c.c \
 	linux_hrtimer.c \
+	linux_i2c.c \
 	linux_interval_tree.c \
 	linux_iomapping.c \
 	linux_irq.c \
 	linux_kobject.c \
 	linux_kthread.c \
 	linux_list_sort.c \
+	linux_printf.c \
+	linux_radix.c \
+	linux_rcu.c \
 	linux_reservation.c \
 	linux_scatterlist.c \
 	linux_sched.c \
@@ -106,5 +113,6 @@ KCFLAGS+= -I${SYSDIR}/dev/drm/include
 KCFLAGS+= -I${SYSDIR}/dev/drm/include/drm
 KCFLAGS+= -I${SYSDIR}/dev/drm/include/uapi
 KCFLAGS+= -include ${SYSDIR}/dev/drm/kconfig.h
+KCFLAGS+= -DKBUILD_MODNAME=\"$(KMOD)\"
 
 .include <bsd.kmod.mk>

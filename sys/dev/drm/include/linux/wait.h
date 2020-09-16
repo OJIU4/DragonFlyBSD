@@ -52,11 +52,12 @@ typedef struct {
 	struct list_head	task_list;
 } wait_queue_head_t;
 
+void __init_waitqueue_head(wait_queue_head_t *q, const char *name, struct lock_class_key *);
+
 static inline void
-init_waitqueue_head(wait_queue_head_t *eq)
+init_waitqueue_head(wait_queue_head_t *q)
 {
-	lockinit(&eq->lock, "lwq", 0, LK_CANRECURSE);
-	INIT_LIST_HEAD(&eq->task_list);
+	__init_waitqueue_head(q, "", NULL);
 }
 
 void __wake_up_core(wait_queue_head_t *q, int num_to_wake_up);
@@ -111,10 +112,12 @@ void finish_wait(wait_queue_head_t *q, wait_queue_t *wait);
 	bool timeout_expired = false;					\
 	bool interrupted = false;					\
 	long retval;							\
-	wait_queue_t tmp_wq;						\
+	int state;							\
+	DEFINE_WAIT(tmp_wq);						\
 									\
 	start_jiffies = ticks;						\
-	INIT_LIST_HEAD(&tmp_wq.task_list);				\
+	state = (flags & PCATCH) ? TASK_INTERRUPTIBLE : TASK_UNINTERRUPTIBLE; \
+	prepare_to_wait(&wq, &tmp_wq, state);				\
 									\
 	while (1) {							\
 		__wait_event_prefix(&wq, flags);			\
@@ -122,7 +125,19 @@ void finish_wait(wait_queue_head_t *q, wait_queue_t *wait);
 		if (condition)						\
 			break;						\
 									\
-		ret = tsleep(&wq, flags, "lwe", timeout_jiffies);	\
+		tsleep_interlock(current, flags);			\
+									\
+		if ((timeout_jiffies) != 0) {				\
+			ret = tsleep(current, PINTERLOCKED|flags, "lwe", timeout_jiffies);	\
+		} else {						\
+			ret = tsleep(current, PINTERLOCKED|flags, "lwe", hz);\
+			if (ret == EWOULDBLOCK) {			\
+				kprintf("F");				\
+				print_backtrace(-1);			\
+				ret = 0;				\
+			}						\
+		}							\
+									\
 		if (ret == EINTR || ret == ERESTART) {			\
 			interrupted = true;				\
 			break;						\
@@ -191,6 +206,13 @@ waitqueue_active(wait_queue_head_t *q)
 		.private = current,				\
 		.task_list = LIST_HEAD_INIT((name).task_list),	\
 		.func = autoremove_wake_function,		\
+	}
+
+#define DEFINE_WAIT_FUNC(name, _function)			\
+	wait_queue_t name = {					\
+		.private = current,				\
+		.task_list = LIST_HEAD_INIT((name).task_list),	\
+		.func = _function,				\
 	}
 
 static inline void

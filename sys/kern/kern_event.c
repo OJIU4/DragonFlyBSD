@@ -43,7 +43,7 @@
 #include <sys/socketvar.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
-#include <sys/sysproto.h>
+#include <sys/sysmsg.h>
 #include <sys/thread.h>
 #include <sys/uio.h>
 #include <sys/signalvar.h>
@@ -62,11 +62,13 @@
 static MALLOC_DEFINE(M_KQUEUE, "kqueue", "memory for kqueue system");
 
 struct kevent_copyin_args {
-	struct kevent_args	*ka;
+	const struct kevent_args *ka;
+	struct kevent		*eventlist;
+	const struct kevent	*changelist;
 	int			pchanges;
 };
 
-#define KNOTE_CACHE_MAX		8
+#define KNOTE_CACHE_MAX		64
 
 struct knote_cache_list {
 	struct klist		knote_cache;
@@ -74,7 +76,7 @@ struct knote_cache_list {
 } __cachealign;
 
 static int	kqueue_scan(struct kqueue *kq, struct kevent *kevp, int count,
-		    struct knote *marker, int closedcounter);
+		    struct knote *marker, int closedcounter, int scan_flags);
 static int 	kqueue_read(struct file *fp, struct uio *uio,
 		    struct ucred *cred, int flags);
 static int	kqueue_write(struct file *fp, struct uio *uio,
@@ -676,15 +678,13 @@ filt_fs(struct knote *kn, long hint)
  * Initialize a kqueue.
  *
  * NOTE: The lwp/proc code initializes a kqueue for select/poll ops.
- *
- * MPSAFE
  */
 void
 kqueue_init(struct kqueue *kq, struct filedesc *fdp)
 {
+	bzero(kq, sizeof(*kq));
 	TAILQ_INIT(&kq->kq_knpend);
 	TAILQ_INIT(&kq->kq_knlist);
-	kq->kq_count = 0;
 	kq->kq_fdp = fdp;
 	SLIST_INIT(&kq->kq_kqinfo.ki_note);
 }
@@ -719,7 +719,7 @@ kqueue_terminate(struct kqueue *kq)
  * MPSAFE
  */
 int
-sys_kqueue(struct kqueue_args *uap)
+sys_kqueue(struct sysmsg *sysmsg, const struct kqueue_args *uap)
 {
 	struct thread *td = curthread;
 	struct kqueue *kq;
@@ -738,7 +738,7 @@ sys_kqueue(struct kqueue_args *uap)
 	fp->f_data = kq;
 
 	fsetfd(kq->kq_fdp, fp, fd);
-	uap->sysmsg_result = fd;
+	sysmsg->sysmsg_result = fd;
 	fdrop(fp);
 	return (error);
 }
@@ -754,9 +754,9 @@ kevent_copyout(void *arg, struct kevent *kevp, int count, int *res)
 
 	kap = (struct kevent_copyin_args *)arg;
 
-	error = copyout(kevp, kap->ka->eventlist, count * sizeof(*kevp));
+	error = copyout(kevp, kap->eventlist, count * sizeof(*kevp));
 	if (error == 0) {
-		kap->ka->eventlist += count;
+		kap->eventlist += count;
 		*res += count;
 	} else {
 		*res = -1;
@@ -778,9 +778,9 @@ kevent_copyin(void *arg, struct kevent *kevp, int max, int *events)
 	kap = (struct kevent_copyin_args *)arg;
 
 	count = min(kap->ka->nchanges - kap->pchanges, max);
-	error = copyin(kap->ka->changelist, kevp, count * sizeof *kevp);
+	error = copyin(kap->changelist, kevp, count * sizeof *kevp);
 	if (error == 0) {
-		kap->ka->changelist += count;
+		kap->changelist += count;
 		kap->pchanges += count;
 		*events = count;
 	}
@@ -803,6 +803,7 @@ kern_kevent(struct kqueue *kq, int nevents, int *res, void *uap,
 	int lres;
 	int limit = kq_checkloop;
 	int closedcounter;
+	int scan_flags;
 	struct kevent kev[KQ_NEVENTS];
 	struct knote marker;
 	struct lwkt_token *tok;
@@ -860,12 +861,17 @@ kern_kevent(struct kqueue *kq, int nevents, int *res, void *uap,
 
 	/*
 	 * Acquire/wait for events - setup timeout
+	 *
+	 * If no timeout specified clean up the run path by clearing the
+	 * PRECISE flag.
 	 */
 	if (tsp != NULL) {
 		if (tsp->tv_sec || tsp->tv_nsec) {
 			getnanouptime(&ats);
 			timespecadd(tsp, &ats, tsp);	/* tsp = target time */
 		}
+	} else {
+		flags &= ~KEVENT_TIMEOUT_PRECISE;
 	}
 
 	/*
@@ -887,99 +893,20 @@ kern_kevent(struct kqueue *kq, int nevents, int *res, void *uap,
 	error = 0;
 	marker.kn_filter = EVFILT_MARKER;
 	marker.kn_status = KN_PROCESSING;
+
 	tok = lwkt_token_pool_lookup(kq);
-	lwkt_gettoken(tok);
-	TAILQ_INSERT_TAIL(&kq->kq_knpend, &marker, kn_tqe);
-	lwkt_reltoken(tok);
+	scan_flags = KEVENT_SCAN_INSERT_MARKER;
+
 	while ((n = nevents - total) > 0) {
 		if (n > KQ_NEVENTS)
 			n = KQ_NEVENTS;
 
 		/*
-		 * If no events are pending sleep until timeout (if any)
-		 * or an event occurs.
-		 *
-		 * After the sleep completes the marker is moved to the
-		 * end of the list, making any received events available
-		 * to our scan.
-		 */
-		if (kq->kq_count == 0 && *res == 0) {
-			int timeout, ustimeout = 0;
-
-			if (tsp == NULL) {
-				timeout = 0;
-			} else if (tsp->tv_sec == 0 && tsp->tv_nsec == 0) {
-				error = EWOULDBLOCK;
-				break;
-			} else {
-				struct timespec atx = *tsp;
-
-				getnanouptime(&ats);
-				timespecsub(&atx, &ats, &atx);
-				if (atx.tv_sec < 0) {
-					error = EWOULDBLOCK;
-					break;
-				} else {
-					timeout = atx.tv_sec > 24 * 60 * 60 ?
-					    24 * 60 * 60 * hz :
-					    tstohz_high(&atx);
-				}
-				if (flags & KEVENT_TIMEOUT_PRECISE &&
-				    timeout != 0) {
-					if (atx.tv_sec == 0 &&
-					    atx.tv_nsec < kq_sleep_threshold) {
-						DELAY(atx.tv_nsec / 1000);
-						error = EWOULDBLOCK;
-						break;
-					} else if (atx.tv_sec < 2000) {
-						ustimeout = atx.tv_sec *
-						    1000000 + atx.tv_nsec/1000;
-					} else {
-						ustimeout = 2000000000;
-					}
-				}
-			}
-
-			lwkt_gettoken(tok);
-			if (kq->kq_count == 0) {
-				kq->kq_sleep_cnt++;
-				if (__predict_false(kq->kq_sleep_cnt == 0)) {
-					/*
-					 * Guard against possible wrapping.  And
-					 * set it to 2, so that kqueue_wakeup()
-					 * can wake everyone up.
-					 */
-					kq->kq_sleep_cnt = 2;
-				}
-				if ((flags & KEVENT_TIMEOUT_PRECISE) &&
-				    timeout != 0) {
-					error = precise_sleep(kq, PCATCH,
-					    "kqread", ustimeout);
-				} else {
-					error = tsleep(kq, PCATCH, "kqread",
-					    timeout);
-				}
-
-				/* don't restart after signals... */
-				if (error == ERESTART)
-					error = EINTR;
-				if (error) {
-					lwkt_reltoken(tok);
-					break;
-				}
-
-				TAILQ_REMOVE(&kq->kq_knpend, &marker, kn_tqe);
-				TAILQ_INSERT_TAIL(&kq->kq_knpend, &marker,
-				    kn_tqe);
-			}
-			lwkt_reltoken(tok);
-		}
-
-		/*
 		 * Process all received events
 		 * Account for all non-spurious events in our total
 		 */
-		i = kqueue_scan(kq, kev, n, &marker, closedcounter);
+		i = kqueue_scan(kq, kev, n, &marker, closedcounter, scan_flags);
+		scan_flags = KEVENT_SCAN_KEEP_MARKER;
 		if (i) {
 			lres = *res;
 			error = kevent_copyoutfn(uap, kev, i, res);
@@ -1000,6 +927,91 @@ kern_kevent(struct kqueue *kq, int nevents, int *res, void *uap,
 			break;
 
 		/*
+		 * If no events were recorded (no events happened or the events
+		 * that did happen were all spurious), block until an event
+		 * occurs or the timeout occurs and reload the marker.
+		 *
+		 * If we saturated n (i == n) loop up without sleeping to
+		 * continue processing the list.
+		 */
+		if (i != n && kq->kq_count == 0 && *res == 0) {
+			int timeout;
+			int ustimeout;
+
+			if (tsp == NULL) {
+				timeout = 0;
+				ustimeout = 0;
+			} else if (tsp->tv_sec == 0 && tsp->tv_nsec == 0) {
+				error = EWOULDBLOCK;
+				break;
+			} else {
+				struct timespec atx = *tsp;
+
+				getnanouptime(&ats);
+				timespecsub(&atx, &ats, &atx);
+				if (atx.tv_sec < 0 ||
+				    (atx.tv_sec == 0 && atx.tv_nsec <= 0)) {
+					error = EWOULDBLOCK;
+					break;
+				}
+				if (flags & KEVENT_TIMEOUT_PRECISE) {
+					if (atx.tv_sec == 0 &&
+					    atx.tv_nsec < kq_sleep_threshold) {
+						ustimeout = kq_sleep_threshold /
+							    1000;
+					} else if (atx.tv_sec < 60) {
+						ustimeout =
+							atx.tv_sec * 1000000 +
+							atx.tv_nsec / 1000;
+					} else {
+						ustimeout = 60 * 1000000;
+					}
+					if (ustimeout == 0)
+						ustimeout = 1;
+					timeout = 0;
+				} else if (atx.tv_sec > 60 * 60) {
+					timeout = 60 * 60 * hz;
+					ustimeout = 0;
+				} else {
+					timeout = tstohz_high(&atx);
+					ustimeout = 0;
+				}
+			}
+
+			lwkt_gettoken(tok);
+			if (kq->kq_count == 0) {
+				kq->kq_sleep_cnt++;
+				if (__predict_false(kq->kq_sleep_cnt == 0)) {
+					/*
+					 * Guard against possible wrapping.  And
+					 * set it to 2, so that kqueue_wakeup()
+					 * can wake everyone up.
+					 */
+					kq->kq_sleep_cnt = 2;
+				}
+				if (flags & KEVENT_TIMEOUT_PRECISE) {
+					error = precise_sleep(kq, PCATCH,
+							"kqread", ustimeout);
+				} else {
+					error = tsleep(kq, PCATCH,
+							"kqread", timeout);
+				}
+
+				/* don't restart after signals... */
+				if (error == ERESTART)
+					error = EINTR;
+				if (error == EWOULDBLOCK)
+					error = 0;
+				if (error) {
+					lwkt_reltoken(tok);
+					break;
+				}
+				scan_flags = KEVENT_SCAN_RELOAD_MARKER;
+			}
+			lwkt_reltoken(tok);
+		}
+
+		/*
 		 * Deal with an edge case where spurious events can cause
 		 * a loop to occur without moving the marker.  This can
 		 * prevent kqueue_scan() from picking up new events which
@@ -1012,16 +1024,18 @@ kern_kevent(struct kqueue *kq, int nevents, int *res, void *uap,
 		 *	 that case could result in duplicates for the
 		 *	 same event.
 		 */
-		if (i == 0) {
-			lwkt_gettoken(tok);
-			TAILQ_REMOVE(&kq->kq_knpend, &marker, kn_tqe);
-			TAILQ_INSERT_TAIL(&kq->kq_knpend, &marker, kn_tqe);
-			lwkt_reltoken(tok);
-		}
+		if (i == 0)
+			scan_flags = KEVENT_SCAN_RELOAD_MARKER;
 	}
-	lwkt_gettoken(tok);
-	TAILQ_REMOVE(&kq->kq_knpend, &marker, kn_tqe);
-	lwkt_reltoken(tok);
+
+	/*
+	 * Remove the marker
+	 */
+	if (scan_flags != KEVENT_SCAN_INSERT_MARKER) {
+		lwkt_gettoken(tok);
+		TAILQ_REMOVE(&kq->kq_knpend, &marker, kn_tqe);
+		lwkt_reltoken(tok);
+	}
 
 	/* Timeouts do not return EWOULDBLOCK. */
 	if (error == EWOULDBLOCK)
@@ -1033,7 +1047,7 @@ kern_kevent(struct kqueue *kq, int nevents, int *res, void *uap,
  * MPALMOSTSAFE
  */
 int
-sys_kevent(struct kevent_args *uap)
+sys_kevent(struct sysmsg *sysmsg, const struct kevent_args *uap)
 {
 	struct thread *td = curthread;
 	struct timespec ts, *tsp;
@@ -1063,8 +1077,10 @@ sys_kevent(struct kevent_args *uap)
 	kap = &ka;
 	kap->ka = uap;
 	kap->pchanges = 0;
+	kap->eventlist = uap->eventlist;
+	kap->changelist = uap->changelist;
 
-	error = kern_kevent(kq, uap->nevents, &uap->sysmsg_result, kap,
+	error = kern_kevent(kq, uap->nevents, &sysmsg->sysmsg_result, kap,
 			    kevent_copyin, kevent_copyout, tsp, 0);
 
 	dropfp(td, uap->fd, fp);
@@ -1433,7 +1449,7 @@ done:
  */
 static int
 kqueue_scan(struct kqueue *kq, struct kevent *kevp, int count,
-            struct knote *marker, int closedcounter)
+            struct knote *marker, int closedcounter, int scan_flags)
 {
 	struct knote *kn, local_marker;
 	thread_t td = curthread;
@@ -1446,9 +1462,23 @@ kqueue_scan(struct kqueue *kq, struct kevent *kevp, int count,
 	lwkt_getpooltoken(kq);
 
 	/*
+	 * Adjust marker, insert initial marker, or leave the marker alone.
+	 *
+	 * Also setup our local_marker.
+	 */
+	switch(scan_flags) {
+	case KEVENT_SCAN_RELOAD_MARKER:
+		TAILQ_REMOVE(&kq->kq_knpend, marker, kn_tqe);
+		/* fall through */
+	case KEVENT_SCAN_INSERT_MARKER:
+		TAILQ_INSERT_TAIL(&kq->kq_knpend, marker, kn_tqe);
+		break;
+	}
+	TAILQ_INSERT_HEAD(&kq->kq_knpend, &local_marker, kn_tqe);
+
+	/*
 	 * Collect events.
 	 */
-	TAILQ_INSERT_HEAD(&kq->kq_knpend, &local_marker, kn_tqe);
 	while (count) {
 		kn = TAILQ_NEXT(&local_marker, kn_tqe);
 		if (kn->kn_filter == EVFILT_MARKER) {
@@ -2048,8 +2078,7 @@ precise_sleep(void *ident, int flags, const char *wmesg, int us)
 	int r;
 
 	tsleep_interlock(ident, flags);
-	systimer_init_oneshot(&info, precise_sleep_intr, &si,
-	    us == 0 ? 1 : us);
+	systimer_init_oneshot(&info, precise_sleep_intr, &si, us);
 	r = tsleep(ident, flags | PINTERLOCKED, wmesg, 0);
 	systimer_del(&info);
 	if (si.timedout)

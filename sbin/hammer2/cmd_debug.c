@@ -38,9 +38,9 @@
 #include <openssl/sha.h>
 
 #define GIG	(1024LL*1024*1024)
-#define arysize(ary)	(sizeof(ary) / sizeof((ary)[0]))
 
 static int show_tab = 2;
+static int show_depth = -1;
 
 static void shell_msghandler(dmsg_msg_t *msg, int unmanaged);
 static void shell_ttymsg(dmsg_iocom_t *iocom);
@@ -411,6 +411,12 @@ cmd_show(const char *devpath, int which)
 		if (errno || show_tab < 0 || show_tab > 8)
 			show_tab = 2;
 	}
+	env = getenv("HAMMER2_SHOW_DEPTH");
+	if (env != NULL) {
+		show_depth = (int)strtol(env, NULL, 0);
+		if (errno || show_depth < 0)
+			show_depth = -1;
+	}
 
 	fd = open(devpath, O_RDONLY);
 	if (fd < 0) {
@@ -456,7 +462,8 @@ cmd_show(const char *devpath, int which)
 					show_volhdr(&media.voldata, fd, i);
 					break;
 				}
-				printf("\n");
+				if (i != HAMMER2_NUM_VOLHDRS - 1)
+					printf("\n");
 			}
 		}
 	}
@@ -555,13 +562,13 @@ show_volhdr(hammer2_volume_data_t *voldata, int fd, int bi)
 	printf("    reserved0080   0x%016jx\n", voldata->reserved0080);
 	printf("    reserved0088   0x%016jx\n", voldata->reserved0088);
 	printf("    freemap_tid    0x%016jx\n", voldata->freemap_tid);
-	for (i = 0; i < arysize(voldata->reserved00A0); ++i) {
+	for (i = 0; i < nitems(voldata->reserved00A0); ++i) {
 		printf("    reserved00A0/%u 0x%016jx\n",
 		       i, voldata->reserved00A0[0]);
 	}
 
 	printf("    copyexists    ");
-	for (i = 0; i < arysize(voldata->copyexists); ++i)
+	for (i = 0; i < nitems(voldata->copyexists); ++i)
 		printf(" 0x%02x", voldata->copyexists[i]);
 	printf("\n");
 
@@ -575,7 +582,7 @@ show_volhdr(hammer2_volume_data_t *voldata, int fd, int bi)
 	 *	 CRCs.
 	 */
 	printf("\n");
-	for (i = 0; i < arysize(voldata->icrc_sects); ++i) {
+	for (i = 0; i < nitems(voldata->icrc_sects); ++i) {
 		printf("    icrc_sects[%u]  ", i);
 		switch(i) {
 		case HAMMER2_VOL_ICRC_SECT0:
@@ -635,7 +642,6 @@ show_volhdr(hammer2_volume_data_t *voldata, int fd, int bi)
 	for (i = 0; i < HAMMER2_SET_COUNT; ++i) {
 		show_bref(voldata, fd, 16, i,
 			  &voldata->sroot_blockset.blockref[i], 2);
-	        printf("\n");
 	}
 	printf("    }\n");
 
@@ -643,7 +649,6 @@ show_volhdr(hammer2_volume_data_t *voldata, int fd, int bi)
 	for (i = 0; i < HAMMER2_SET_COUNT; ++i) {
 		show_bref(voldata, fd, 16, i,
 			  &voldata->freemap_blockset.blockref[i], 2);
-	        printf("\n");
 	}
 	printf("    }\n");
 
@@ -664,12 +669,16 @@ show_bref(hammer2_volume_data_t *voldata, int fd, int tab,
 	char *str = NULL;
 	uint32_t cv;
 	uint64_t cv64;
+	static int init_tab = -1;
 
 	SHA256_CTX hash_ctx;
 	union {
 		uint8_t digest[SHA256_DIGEST_LENGTH];
 		uint64_t digest64[SHA256_DIGEST_LENGTH/8];
 	} u;
+
+	if (init_tab == -1)
+		init_tab = tab;
 
 	bytes = (bref->data_off & HAMMER2_OFF_MASK_RADIX);
 	if (bytes)
@@ -681,15 +690,15 @@ show_bref(hammer2_volume_data_t *voldata, int fd, int tab,
 		size_t boff;
 
 		io_off = bref->data_off & ~HAMMER2_OFF_MASK_RADIX;
-		io_base = io_off & ~(hammer2_off_t)(HAMMER2_MINIOSIZE - 1);
+		io_base = io_off & ~(hammer2_off_t)(HAMMER2_LBUFSIZE - 1);
 		boff = io_off - io_base;
 
-		io_bytes = HAMMER2_MINIOSIZE;
+		io_bytes = HAMMER2_LBUFSIZE;
 		while (io_bytes + boff < bytes)
 			io_bytes <<= 1;
 
 		if (io_bytes > sizeof(media)) {
-			printf("(bad block size %zd)\n", bytes);
+			printf("(bad block size %zu)\n", bytes);
 			return;
 		}
 		if (bref->type != HAMMER2_BREF_TYPE_DATA || VerboseOpt >= 1) {
@@ -751,7 +760,6 @@ show_bref(hammer2_volume_data_t *voldata, int fd, int tab,
 			  (intmax_t)bref->mirror_tid,
 			  (intmax_t)bref->modify_tid,
 			  bref->leaf_count);
-		tab += show_tab;
 	} else {
 		tabprintf(tab, "%s.%-3d%*.*s 0x%016jx 0x%016jx/%-2d ",
 			  type_str, bi, type_pad, type_pad, "",
@@ -872,6 +880,8 @@ show_bref(hammer2_volume_data_t *voldata, int fd, int tab,
 
 	switch(bref->type) {
 	case HAMMER2_BREF_TYPE_EMPTY:
+		if (norecurse)
+			printf("\n");
 		obrace = 0;
 		break;
 	case HAMMER2_BREF_TYPE_DIRENT:
@@ -1084,9 +1094,12 @@ skip_data:
 	 * direct children to help with debugging, but go no further than
 	 * that because they are probably garbage.
 	 */
-	for (i = 0; norecurse == 0 && i < bcount; ++i) {
-		if (bscan[i].type != HAMMER2_BREF_TYPE_EMPTY) {
-			show_bref(voldata, fd, tab, i, &bscan[i], failed);
+	if (show_depth == -1 || ((tab - init_tab) / show_tab) < show_depth) {
+		for (i = 0; norecurse == 0 && i < bcount; ++i) {
+			if (bscan[i].type != HAMMER2_BREF_TYPE_EMPTY) {
+				show_bref(voldata, fd, tab, i, &bscan[i],
+				    failed);
+			}
 		}
 	}
 	tab -= show_tab;
@@ -1171,18 +1184,22 @@ int
 cmd_dumpchain(const char *path, u_int flags)
 {
 	int dummy = (int)flags;
+	int ecode = 0;
 	int fd;
 
 	fd = open(path, O_RDONLY);
 	if (fd >= 0) {
-		ioctl(fd, HAMMER2IOC_DEBUG_DUMP, &dummy);
+		if (ioctl(fd, HAMMER2IOC_DEBUG_DUMP, &dummy) < 0) {
+			fprintf(stderr, "%s: %s\n", path, strerror(errno));
+			ecode = 1;
+		}
 		close(fd);
 	} else {
 		fprintf(stderr, "unable to open %s\n", path);
+		ecode = 1;
 	}
-	return 0;
+	return ecode;
 }
-
 
 static
 void

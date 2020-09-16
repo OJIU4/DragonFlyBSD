@@ -59,7 +59,7 @@
  */
 
 #ifndef _STAND_H_
-#define _STAND_H_
+#define	_STAND_H_
 
 #include <machine/stdarg.h>	/* __va_list */
 #include <sys/types.h>
@@ -372,6 +372,7 @@ extern int	null_readdir(struct open_file *, struct dirent *);
  * Machine dependent functions and data, must be provided or stubbed by 
  * the consumer 
  */
+extern void		exit(int); /* should be __dead2 */
 extern int		getchar(void);
 extern int		ischar(void);
 extern void		putchar(int);
@@ -406,4 +407,4 @@ free_debug(void *p, const char *file, int line)
 
 #endif
 
-#endif	/* !_STAND_H_ */
+#endif /* !_STAND_H_ */

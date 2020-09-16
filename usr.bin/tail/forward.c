@@ -144,7 +144,7 @@ forward(FILE *fp, enum STYLE style, off_t off, struct stat *sbp)
 				return;
 		break;
 	case RLINES:
-		if (S_ISREG(sbp->st_mode))
+		if (S_ISREG(sbp->st_mode) && sbp->st_size != 0)
 			if (!off) {
 				if (fseeko(fp, (off_t)0, SEEK_END) == -1) {
 					ierr();
@@ -321,7 +321,7 @@ follow(file_info_t *files, enum STYLE style, off_t off)
 		if (file->fp) {
 			active = 1;
 			n++;
-			if (no_files > 1)
+			if (vflag || no_files > 1)
 				showfilename(i, file->file_name);
 			forward(file->fp, style, off, &file->st);
 			if (Fflag && fileno(file->fp) != STDIN_FILENO)

@@ -89,7 +89,8 @@ static struct tap_softc *tapcreate(cdev_t, int);
 static void		tapdestroy(struct tap_softc *);
 
 /* clone */
-static int		tap_clone_create(struct if_clone *, int, caddr_t);
+static int		tap_clone_create(struct if_clone *, int,
+					 caddr_t, caddr_t);
 static int		tap_clone_destroy(struct ifnet *);
 
 /* network interface */
@@ -273,32 +274,37 @@ tapfind(int unit)
  */
 static int
 tap_clone_create(struct if_clone *ifc __unused, int unit,
-		 caddr_t param __unused)
+		 caddr_t params __unused, caddr_t data)
 {
 	struct tap_softc *sc;
-	cdev_t dev;
+	cdev_t dev = (cdev_t)data;
+	int flags;
 
-	sc = tapfind(unit);
-	if (sc == NULL) {
+	if (tapfind(unit) != NULL)
+		return (EEXIST);
+
+	if (dev == NULL) {
 		if (!devfs_clone_bitmap_chk(&DEVFS_CLONE_BITMAP(tap), unit)) {
 			devfs_clone_bitmap_set(&DEVFS_CLONE_BITMAP(tap), unit);
 			dev = make_dev(&tap_ops, unit, UID_ROOT, GID_WHEEL,
 				       0600, "%s%d", TAP, unit);
 		} else {
 			dev = devfs_find_device_by_name("%s%d", TAP, unit);
+			if (dev == NULL)
+				return (ENOENT);
 		}
-
-		if (dev == NULL)
-			return (ENODEV);
-		if ((sc = tapcreate(dev, TAP_MANUALMAKE)) == NULL)
-			return (ENOMEM);
+		flags = TAP_MANUALMAKE;
 	} else {
-		dev = sc->tap_dev;
+		flags = 0;
 	}
 
+	if ((sc = tapcreate(dev, flags)) == NULL)
+		return (ENOMEM);
+
 	sc->tap_flags |= TAP_CLONE;
+
 	TAPDEBUG(&sc->tap_if, "clone created, minor = %#x, flags = 0x%x\n",
-		 minor(dev), sc->tap_flags);
+		 minor(sc->tap_dev), sc->tap_flags);
 
 	return (0);
 }
@@ -319,9 +325,10 @@ tapopen(struct dev_open_args *ap)
 		return (error);
 
 	get_mplock();
+
 	dev = ap->a_head.a_dev;
 	sc = dev->si_drv1;
-	if (sc == NULL && (sc = tapcreate(dev, TAP_MANUALMAKE)) == NULL) {
+	if (sc == NULL && (sc = tapcreate(dev, 0)) == NULL) {
 		rel_mplock();
 		return (ENOMEM);
 	}
@@ -329,15 +336,8 @@ tapopen(struct dev_open_args *ap)
 		rel_mplock();
 		return (EBUSY);
 	}
+
 	ifp = &sc->tap_if;
-
-	if ((sc->tap_flags & TAP_CLONE) == 0) {
-		EVENTHANDLER_INVOKE(ifnet_attach_event, ifp);
-
-		/* Announce the return of the interface. */
-		rt_ifannouncemsg(ifp, IFAN_ARRIVAL);
-	}
-
 	bcopy(sc->arpcom.ac_enaddr, sc->ether_addr, sizeof(sc->ether_addr));
 
 	if (curthread->td_proc)
@@ -367,15 +367,24 @@ tapopen(struct dev_open_args *ap)
 static int
 tapclone(struct dev_clone_args *ap)
 {
+	char ifname[IFNAMSIZ];
 	int unit;
 
 	unit = devfs_clone_bitmap_get(&DEVFS_CLONE_BITMAP(tap), 0);
+	ksnprintf(ifname, IFNAMSIZ, "%s%d", TAP, unit);
 	ap->a_dev = make_only_dev(&tap_ops, unit, UID_ROOT, GID_WHEEL,
-				  0600, "%s%d", TAP, unit);
-	if (tapcreate(ap->a_dev, 0) == NULL)
-		return (ENOMEM);
-	else
-		return (0);
+				  0600, "%s", ifname);
+
+	/*
+	 * Use the if_clone framework to create cloned device/interface,
+	 * so the two clone methods (autoclone device /dev/tap; ifconfig
+	 * clone) are consistent and can be mix used.
+	 *
+	 * Need to pass the cdev_t because the device created by
+	 * 'make_only_dev()' doesn't appear in '/dev' yet so that it can't
+	 * be found by 'devfs_find_device_by_name()' in 'tap_clone_create()'.
+	 */
+	return (if_clone_create(ifname, IFNAMSIZ, NULL, (caddr_t)ap->a_dev));
 }
 
 /*
@@ -389,6 +398,7 @@ tapclose(struct dev_close_args *ap)
 	struct ifnet *ifp;
 	int unit = minor(dev);
 	int clear_flags = 0;
+	char ifname[IFNAMSIZ];
 
 	KASSERT(sc != NULL,
 		("try closing the already destroyed %s%d", TAP, unit));
@@ -415,7 +425,7 @@ tapclose(struct dev_close_args *ap)
 	tapifstop(sc, clear_flags);
 	ifnet_deserialize_all(ifp);
 
-	if ((sc->tap_flags & TAP_CLONE) == 0) {
+	if ((sc->tap_flags & TAP_MANUALMAKE) == 0) {
 		if_purgeaddrs_nolink(ifp);
 
 		EVENTHANDLER_INVOKE(ifnet_detach_event, ifp);
@@ -444,8 +454,8 @@ tapclose(struct dev_close_args *ap)
 
 	/* Only auto-destroy if the interface was not manually created. */
 	if ((sc->tap_flags & TAP_MANUALMAKE) == 0) {
-		tapdestroy(sc);
-		dev->si_drv1 = NULL;
+		ksnprintf(ifname, IFNAMSIZ, "%s%d", TAP, unit);
+		if_clone_destroy(ifname);
 	}
 
 	rel_mplock();
@@ -469,10 +479,7 @@ tapdestroy(struct tap_softc *sc)
 	ifnet_serialize_all(ifp);
 	tapifstop(sc, 1);
 	ifnet_deserialize_all(ifp);
-
 	ether_ifdetach(ifp);
-
-	kprintf("TAPDESTROY UNIT %d\n", unit);
 
 	sc->tap_dev = NULL;
 	dev->si_drv1 = NULL;

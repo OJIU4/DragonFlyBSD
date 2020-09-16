@@ -565,8 +565,6 @@ ipv4_getstate(struct interface *ifp)
 			return NULL;
 		}
 		TAILQ_INIT(&state->addrs);
-		state->buffer_size = state->buffer_len = state->buffer_pos = 0;
-		state->buffer = NULL;
 	}
 	return state;
 }
@@ -663,8 +661,13 @@ ipv4_addaddr(struct interface *ifp, const struct in_addr *addr,
 	ia->mask = *mask;
 	ia->brd = *bcast;
 #ifdef IP_LIFETIME
-	ia->vltime = vltime;
-	ia->pltime = pltime;
+	if (ifp->options->options & DHCPCD_LASTLEASE_EXTEND) {
+		/* We don't want the kernel to expire the address. */
+		ia->vltime = ia->pltime = DHCP_INFINITE_LIFETIME;
+	} else {
+		ia->vltime = vltime;
+		ia->pltime = pltime;
+	}
 #else
 	UNUSED(vltime);
 	UNUSED(pltime);
@@ -963,6 +966,5 @@ ipv4_free(struct interface *ifp)
 		TAILQ_REMOVE(&state->addrs, ia, next);
 		free(ia);
 	}
-	free(state->buffer);
 	free(state);
 }

@@ -27,6 +27,7 @@
 #ifndef _LINUX_SPINLOCK_H_
 #define _LINUX_SPINLOCK_H_
 
+#include <linux/typecheck.h>
 #include <linux/preempt.h>
 #include <linux/linkage.h>
 #include <linux/compiler.h>
@@ -36,6 +37,8 @@
 #include <linux/stringify.h>
 #include <linux/bottom_half.h>
 #include <asm/barrier.h>
+
+#include <linux/spinlock_types.h>
 
 #include <linux/rwlock.h>
 

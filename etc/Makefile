@@ -5,7 +5,7 @@ SUBDIR=	sendmail
 
 # Files that should be installed read-only (444)
 #
-BINUPDATE= devd.conf fbtab gettytab network.subr \
+BINUPDATE= devd.conf fbtab network.subr \
 	pf.os \
 	protocols \
 	rc rc.firewall rc.firewall6 \
@@ -23,10 +23,10 @@ BINUPDATE+=${.CURDIR}/../usr.bin/mail/misc/mail.rc \
 
 # Initial distribution files are installed read-write (644)
 #
-BIN1=	auth.conf auto_master \
+BIN1=	auth.conf \
 	crontab csh.cshrc csh.login csh.logout \
 	devtab dhclient.conf dntpd.conf \
-	ftpusers group \
+	ftpusers gettytab group \
 	hosts hosts.allow hosts.equiv hosts.lpd \
 	inetd.conf login.access login.conf \
 	motd modems netconfig networks newsyslog.conf \
@@ -57,6 +57,8 @@ ETCMAIL=aliases mailer.conf access.sample virtusertable.sample \
 
 # Use this directory as the source for new configuration files when upgrading
 UPGRADE_SRCDIR?=${.CURDIR}
+
+CHECK_DEPRECATED_DIRS+=	/usr/local
 
 # Include file which contains obsolete files
 .if exists(${DESTDIR}/etc/upgrade/Makefile_upgrade.inc)
@@ -89,13 +91,34 @@ remove-deprecated-files:
 		fi; \
 	done;
 .else
+	@make check-deprecated-files
+.endif
+
+check-deprecated-files:
 	@echo "===> Checking for deprecated files"
-	@count=0; for item in ${TO_REMOVE_LATE}; do \
+	@echo "     (harmless ELF linker warnings may appear here)"
+	@tmpldd=`mktemp -t chkldd`; \
+	chroot ${DESTDIR}/ find ${CHECK_DEPRECATED_DIRS:O:u} \
+				-type f \( -name '*.so*' -o -perm +111 \) | \
+				chroot ${DESTDIR}/ xargs ldd 2>/dev/null > $${tmpldd}; \
+	count=0; for item in ${TO_REMOVE_LATE}; do \
 		if [ -e ${DESTDIR}$${item} -o -L ${DESTDIR}$${item} ]; then \
 			echo "${DESTDIR}$${item} is deprecated"; \
+			deps=""; \
+			for object in `cat $${tmpldd} | awk -v library=$${item} \
+				-f ${.CURDIR}/../tools/tools/chkldd/chkldd.awk`; do \
+				echo "${TO_REMOVE_LATE}" | grep -q "$${object}" \
+					|| deps="$${deps} $${object}"; \
+			done; \
+			if [ -n "$${deps}" ]; then \
+				echo "  but it's still linked from these objects:"; \
+				echo "  " $${deps}; \
+				echo ""; \
+			fi; \
 			count=`expr $$count + 1`; \
 		fi; \
 	done; \
+	rm $${tmpldd}; \
 	if [ "$$count" -gt 0 ]; then \
 		echo "==================================================================" ; \
 		echo "= You have $$count now deprecated files." ; \
@@ -104,7 +127,6 @@ remove-deprecated-files:
 		echo "=     make upgrade -DREMOVE_DEPRECATED" ; \
 		echo "==================================================================" ; \
 	fi;
-.endif
 
 preupgrade:
 	(pw -V ${DESTDIR}/etc usershow mail -q > /dev/null) || \
@@ -122,11 +144,7 @@ preupgrade:
 	(pw -V ${DESTDIR}/etc usershow _dhcp -q > /dev/null) || \
 		pw -V ${DESTDIR}/etc useradd _dhcp -u 77 \
 		   -c "DHCP programs" \
-		   -d /var/chroot/dhcp -s /sbin/nologin
-	if [ `pw -V ${DESTDIR}/etc usershow _dhcp | cut -d: -f9` = /var/empty ]; then \
-		pw -V ${DESTDIR}/etc usermod _dhcp -d /var/chroot/dhcp; \
-		mkdir -p ${DESTDIR}/var/chroot/dhcp; \
-	fi
+		   -d /var/empty -s /sbin/nologin
 	(pw -V ${DESTDIR}/etc groupshow input -q > /dev/null) || \
 		pw -V ${DESTDIR}/etc groupadd input -g 43
 	(pw -V ${DESTDIR}/etc groupshow video -q > /dev/null) || \
@@ -177,8 +195,6 @@ upgrade_base:	upgrade_check preupgrade remove-obsolete-files
 	mkdir -p ${DESTDIR}/etc/rc.d
 	cd ${UPGRADE_SRCDIR}/rc.d; ${MAKE} install
 	cd ${UPGRADE_SRCDIR}/devd; ${MAKE} install
-	mkdir -p ${DESTDIR}/etc/autofs
-	cd ${UPGRADE_SRCDIR}/autofs; ${MAKE} install
 	# "../share/termcap/make etc-termcap" expanded inline here:
 	${LN} -fs /usr/share/misc/termcap ${DESTDIR}/etc/termcap
 	# "../usr.sbin/rmt/make etc-rmt" expanded inline here:
@@ -186,6 +202,7 @@ upgrade_base:	upgrade_check preupgrade remove-obsolete-files
 	cd ${UPGRADE_SRCDIR}/mtree; ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 444 \
 	    ${MTREE} ${DESTDIR}/etc/mtree
 	cd ${UPGRADE_SRCDIR}/bluetooth; ${MAKE} install
+	cd ${UPGRADE_SRCDIR}/calendar; ${MAKE} install
 	cd ${UPGRADE_SRCDIR}; ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 444 Makefile.usr ${DESTDIR}/usr/Makefile
 .if !exists(${DESTDIR}/etc/pam.d)
 	mkdir -p ${DESTDIR}/etc/pam.d
@@ -260,16 +277,21 @@ upgrade_base:	upgrade_check preupgrade remove-obsolete-files
 		echo "	make install"; \
 	fi
 
-# Move the dhcpcd duid, secret and lease files to the chroot
-# to ensure users get the same address upon restarting.
+# Move the dhcpcd duid, secret and lease files back outside the chroot.
+# Then ensure the chroot is empty.
+	DHCPCD_DB="${DESTDIR}/var/db/dhcpcd"; \
 	DHCPCD_CHROOT=`pw -V ${DESTDIR}/etc usershow _dhcp | cut -d: -f9`; \
 	DHCPCD_CHROOT_DB="${DESTDIR}$$DHCPCD_CHROOT/var/db/dhcpcd"; \
-	if [ -f "${DESTDIR}/var/db/dhcpcd/duid" ] && \
-	   [ ! -f "$$DHCPCD_CHROOT_DB/duid" ]; then \
-		mkdir -p "$$DHCPCD_CHROOT_DB" && \
-		mv "${DESTDIR}/var/db/dhcpcd/"* "$$DHCPCD_CHROOT_DB"; \
-		chown -R _dhcp:_dhcp "$$DHCPCD_CHROOT"; \
-		rmdir "${DESTDIR}/var/db/dhcpcd"; \
+	if [ -f "$$DHCPCD_CHROOT_DB/duid" ] && \
+	    [ ! -f "$$DHCPCD_DB/duid" ]; then \
+		mkdir -p "$$DHCPCD_DB" && \
+		mv "$$DHCPCD_CHROOT_DB"/* "$$DHCPCD_DB"; \
+		chown -R root:wheel "$$DHCPCD_DB"; \
+		rm -rf "$$DHCPCD_CHROOT"/*; \
+	fi; \
+	if [ "$$DHCPCD_CHROOT" != /var/empty ]; then \
+		pw -V ${DESTDIR}/etc usermod _dhcp -d /var/empty; \
+		rm -rf "$$DHCPCD_CHROOT"; \
 	fi
 
 upgrade_etc:	upgrade_base remove-deprecated-files
@@ -291,10 +313,10 @@ distribution:
 	    ${DEFAULTS} ${DESTDIR}/etc/defaults
 	cd ${.CURDIR}/pam.d; ${MAKE} install
 	cd ${.CURDIR}/bluetooth; ${MAKE} install
+	cd ${.CURDIR}/calendar; ${MAKE} install
 	cd ${.CURDIR}/periodic; ${MAKE} install
 	cd ${.CURDIR}/rc.d; ${MAKE} install
 	cd ${.CURDIR}/devd; ${MAKE} install
-	cd ${.CURDIR}/autofs; ${MAKE} install
 	cd ${.CURDIR}/../share/termcap; ${MAKE} etc-termcap
 	cd ${.CURDIR}/../usr.sbin/rmt; ${MAKE} etc-rmt
 	cd ${.CURDIR}; \
@@ -307,11 +329,9 @@ distribution:
 .endif
 .endfor
 	mkdir -p ${DESTDIR}/dev
-	cd ${.CURDIR}/root; \
+	cd ${.CURDIR}/../share/skel; \
 	    ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 644 \
 		dot.cshrc ${DESTDIR}/root/.cshrc; \
-	    ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 644 \
-		dot.klogin ${DESTDIR}/root/.klogin; \
 	    ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 644 \
 		dot.login ${DESTDIR}/root/.login; \
 	    ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 644 \

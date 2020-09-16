@@ -33,7 +33,6 @@
 #ifndef _SYS_MOUNT_H_
 #define _SYS_MOUNT_H_
 
-#include <sys/mplock2.h>
 #include <sys/queue.h>
 #include <sys/tree.h>
 #include <sys/ucred.h>
@@ -58,6 +57,7 @@
 #include <sys/thread.h>
 #endif
 #include <sys/vfs_quota.h>
+#include <sys/mplock2.h>
 #endif
 
 struct thread;
@@ -68,6 +68,8 @@ struct statvfs;
 struct vmntvnodescan_info;
 
 typedef struct fsid { int32_t val[2]; } fsid_t;	/* file system id type */
+
+#define fsidcmp(a, b) memcmp((a), (b), sizeof(fsid_t))
 
 /*
  * File identifier.  These are unique per filesystem on a single machine.
@@ -257,6 +259,7 @@ struct mount {
 	int16_t		mnt_streamid;		/* last streamid */
 
 	struct bio_ops	*mnt_bioops;		/* BIO ops (hammer, softupd) */
+	struct lock	mnt_renlock;		/* rename directory lock */
 
 	struct vfs_acct	mnt_acct;		/* vfs space accounting */
 	RB_ENTRY(mount)	mnt_node;		/* mnt_stat.f_fsid */

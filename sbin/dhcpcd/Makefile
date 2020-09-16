@@ -28,7 +28,7 @@ CFLAGS+=	-DDHCP6
 SRCS+=		dhcp6.c
 
 CFLAGS+=	-DPRIVSEP -DPRIVSEP_USER='"_dhcp"'
-SRCS+=		privsep.c privsep-root.c privsep-inet.c
+SRCS+=		privsep.c privsep-root.c privsep-inet.c privsep-control.c
 SRCS+=		privsep-bpf.c
 SRCS+=		privsep-bsd.c
 
@@ -75,6 +75,7 @@ _SED_CMDS=	-e 's:@SYSCONFDIR@:${_SYSCONFDIR}:g' \
 		-e 's:@SERVICECMD@::g' \
 		-e 's:@SERVICESTATUS@::g' \
 		-e 's:@STATUSARG@::g' \
+		-e 's:@DEFAULT_HOSTNAME@::g' \
 		-e 's:@YPDOMAIN_DIR@::g' \
 		-e 's:@YPDOMAIN_SUFFIX@::g'
 

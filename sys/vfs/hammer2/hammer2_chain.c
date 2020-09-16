@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2019 The DragonFly Project.  All rights reserved.
+ * Copyright (c) 2011-2020 The DragonFly Project.  All rights reserved.
  *
  * This code is derived from software contributed to The DragonFly Project
  * by Matthew Dillon <dillon@dragonflybsd.org>
@@ -398,9 +398,6 @@ void
 hammer2_chain_drop(hammer2_chain_t *chain)
 {
 	u_int refs;
-
-	if (hammer2_debug & 0x200000)
-		Debugger("drop");
 
 	KKASSERT(chain->refs > 0);
 
@@ -1229,11 +1226,11 @@ hammer2_chain_load_data(hammer2_chain_t *chain)
 		error = hammer2_io_bread(hmp, bref->type,
 					 bref->data_off, chain->bytes,
 					 &chain->dio);
-		hammer2_adjreadcounter(&chain->bref, chain->bytes);
+		hammer2_adjreadcounter(chain->bref.type, chain->bytes);
 	}
 	if (error) {
 		chain->error = HAMMER2_ERROR_EIO;
-		kprintf("hammer2_chain_lock: I/O error %016jx: %d\n",
+		kprintf("hammer2_chain_load_data: I/O error %016jx: %d\n",
 			(intmax_t)bref->data_off, error);
 		hammer2_io_bqrelse(&chain->dio);
 		goto done;
@@ -1274,16 +1271,23 @@ hammer2_chain_load_data(hammer2_chain_t *chain)
 	 */
 
 	/*
-	 * Clear INITIAL.  In this case we used io_new() and the buffer has
-	 * been zero'd and marked dirty.
-	 *
 	 * NOTE: hammer2_io_data() call issues bkvasync()
 	 */
 	bdata = hammer2_io_data(chain->dio, chain->bref.data_off);
 
 	if (chain->flags & HAMMER2_CHAIN_INITIAL) {
+		/*
+		 * Clear INITIAL.  In this case we used io_new() and the
+		 * buffer has been zero'd and marked dirty.
+		 *
+		 * CHAIN_MODIFIED has not been set yet, and we leave it
+		 * that way for now.  Set a temporary CHAIN_NOTTESTED flag
+		 * to prevent hammer2_chain_testcheck() from trying to match
+		 * a check code that has not yet been generated.  This bit
+		 * should NOT end up on the actual media.
+		 */
 		atomic_clear_int(&chain->flags, HAMMER2_CHAIN_INITIAL);
-		chain->bref.flags |= HAMMER2_BREF_FLAG_ZERO;
+		atomic_set_int(&chain->flags, HAMMER2_CHAIN_NOTTESTED);
 	} else if (chain->flags & HAMMER2_CHAIN_MODIFIED) {
 		/*
 		 * check data not currently synchronized due to
@@ -1609,12 +1613,12 @@ hammer2_chain_resize(hammer2_chain_t *chain,
 		return error;
 
 	/*
-	 * Relocate the block, even if making it smaller (because different
+	 * Reallocate the block, even if making it smaller (because different
 	 * block sizes may be in different regions).
 	 *
 	 * NOTE: Operation does not copy the data and may only be used
-	 *	  to resize data blocks in-place, or directory entry blocks
-	 *	  which are about to be modified in some manner.
+	 *	 to resize data blocks in-place, or directory entry blocks
+	 *	 which are about to be modified in some manner.
 	 */
 	error = hammer2_freemap_alloc(chain, nbytes);
 	if (error)
@@ -1680,7 +1684,6 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 
 	hmp = chain->hmp;
 	obref = chain->bref;
-	KKASSERT((chain->flags & HAMMER2_CHAIN_FICTITIOUS) == 0);
 	KKASSERT(chain->lock.mtx_lock & MTX_EXCLUSIVE);
 
 	/*
@@ -1939,20 +1942,28 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 		atomic_set_int(&chain->flags, HAMMER2_CHAIN_BMAPUPD);
 
 	/*
-	 * Short-cut data blocks which the caller does not need an actual
-	 * data reference to (aka OPTDATA), as long as the chain does not
-	 * already have a data pointer to the data.  This generally means
-	 * that the modifications are being done via the logical buffer cache.
-	 * The INITIAL flag relates only to the device data buffer and thus
-	 * remains unchange in this situation.
+	 * Short-cut data block handling when the caller does not need an
+	 * actual data reference to (aka OPTDATA), as long as the chain does
+	 * not already have a data pointer to the data and no de-duplication
+	 * occurred.
+	 *
+	 * This generally means that the modifications are being done via the
+	 * logical buffer cache.
+	 *
+	 * NOTE: If deduplication occurred we have to run through the data
+	 *	 stuff to clear INITIAL, and the caller will likely want to
+	 *	 assign the check code anyway.  Leaving INITIAL set on a
+	 *	 dedup can be deadly (it can cause the block to be zero'd!).
 	 *
 	 * This code also handles bytes == 0 (most dirents).
 	 */
 	if (chain->bref.type == HAMMER2_BREF_TYPE_DATA &&
 	    (flags & HAMMER2_MODIFY_OPTDATA) &&
 	    chain->data == NULL) {
-		KKASSERT(chain->dio == NULL);
-		goto skip2;
+		if (dedup_off == 0) {
+			KKASSERT(chain->dio == NULL);
+			goto skip2;
+		}
 	}
 
 	/*
@@ -1962,6 +1973,8 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 	 * If this flag is already clear we are likely in a copy-on-write
 	 * situation but we have to be sure NOT to bzero the storage if
 	 * no data is present.
+	 *
+	 * Clearing of NOTTESTED is allowed if the MODIFIED bit is set,
 	 */
 	if (chain->flags & HAMMER2_CHAIN_INITIAL) {
 		atomic_clear_int(&chain->flags, HAMMER2_CHAIN_INITIAL);
@@ -2018,7 +2031,7 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 						 chain->bref.data_off,
 						 chain->bytes, &dio);
 		}
-		hammer2_adjreadcounter(&chain->bref, chain->bytes);
+		hammer2_adjreadcounter(chain->bref.type, chain->bytes);
 
 		/*
 		 * If an I/O error occurs make sure callers cannot accidently
@@ -2046,7 +2059,7 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 			if (chain->data != (void *)bdata && dedup_off == 0) {
 				bcopy(chain->data, bdata, chain->bytes);
 			}
-		} else if (wasinitial == 0) {
+		} else if (wasinitial == 0 && dedup_off == 0) {
 			/*
 			 * We have a problem.  We were asked to COW but
 			 * we don't have any data to COW with!
@@ -3814,8 +3827,7 @@ _hammer2_chain_delete_helper(hammer2_chain_t *parent, hammer2_chain_t *chain,
 	hammer2_dev_t *hmp;
 	int error = 0;
 
-	KKASSERT((chain->flags & (HAMMER2_CHAIN_DELETED |
-				  HAMMER2_CHAIN_FICTITIOUS)) == 0);
+	KKASSERT((chain->flags & HAMMER2_CHAIN_DELETED) == 0);
 	KKASSERT(chain->parent == parent);
 	hmp = chain->hmp;
 
@@ -4040,7 +4052,7 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent,
 	 */
 	*errorp = hammer2_chain_modify(parent, mtid, 0, 0);
 	if (*errorp) {
-		kprintf("hammer2_create_indirect: error %08x %s\n",
+		kprintf("hammer2_chain_create_indirect: error %08x %s\n",
 			*errorp, hammer2_error_str(*errorp));
 		return NULL;
 	}
@@ -4165,7 +4177,7 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent,
 	 */
 	*errorp = hammer2_chain_modify(ichain, mtid, 0, 0);
 	if (*errorp) {
-		kprintf("hammer2_alloc_indirect: error %08x %s\n",
+		kprintf("hammer2_chain_create_indirect: error %08x %s\n",
 			*errorp, hammer2_error_str(*errorp));
 		hammer2_chain_unlock(ichain);
 		hammer2_chain_drop(ichain);
@@ -5767,7 +5779,7 @@ hammer2_base_sort(hammer2_chain_t *chain)
 		count = HAMMER2_SET_COUNT;
 		break;
 	default:
-		kprintf("hammer2_chain_lookup: unrecognized "
+		kprintf("hammer2_base_sort: unrecognized "
 			"blockref(A) type: %d",
 		        chain->bref.type);
 		while (1)
@@ -5814,7 +5826,7 @@ hammer2_chain_wdata(hammer2_chain_t *chain)
 void
 hammer2_chain_setcheck(hammer2_chain_t *chain, void *bdata)
 {
-	chain->bref.flags &= ~HAMMER2_BREF_FLAG_ZERO;
+	atomic_clear_int(&chain->flags, HAMMER2_CHAIN_NOTTESTED);
 
 	switch(HAMMER2_DEC_CHECK(chain->bref.methods)) {
 	case HAMMER2_CHECK_NONE:
@@ -5873,7 +5885,7 @@ hammer2_characterize_failed_chain(hammer2_chain_t *chain, uint64_t check,
 		"(flags=%08x, bref/data ",
 		chain->bref.data_off,
 		chain->bref.type,
-		hammer2_bref_type_str(&chain->bref),
+		hammer2_bref_type_str(chain->bref.type),
 		chain->bref.methods,
 		chain->flags);
 	if (did == 0)
@@ -5940,7 +5952,7 @@ hammer2_chain_testcheck(hammer2_chain_t *chain, void *bdata)
 	uint64_t check64;
 	int r;
 
-	if (chain->bref.flags & HAMMER2_BREF_FLAG_ZERO)
+	if (chain->flags & HAMMER2_CHAIN_NOTTESTED)
 		return 1;
 
 	switch(HAMMER2_DEC_CHECK(chain->bref.methods)) {
@@ -6023,7 +6035,7 @@ hammer2_chain_testcheck(hammer2_chain_t *chain, void *bdata)
 		}
 		break;
 	default:
-		kprintf("hammer2_chain_setcheck: unknown check type %02x\n",
+		kprintf("hammer2_chain_testcheck: unknown check type %02x\n",
 			chain->bref.methods);
 		r = 1;
 		break;

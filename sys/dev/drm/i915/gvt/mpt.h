@@ -44,15 +44,32 @@
  */
 
 /**
- * intel_gvt_hypervisor_detect_host - check if GVT-g is running within
- * hypervisor host/privilged domain
+ * intel_gvt_hypervisor_host_init - init GVT-g host side
  *
  * Returns:
- * Zero on success, -ENODEV if current kernel is running inside a VM
+ * Zero on success, negative error code if failed
  */
-static inline int intel_gvt_hypervisor_detect_host(void)
+static inline int intel_gvt_hypervisor_host_init(struct device *dev,
+			void *gvt, const void *ops)
 {
-	return intel_gvt_host.mpt->detect_host();
+	/* optional to provide */
+	if (!intel_gvt_host.mpt->host_init)
+		return 0;
+
+	return intel_gvt_host.mpt->host_init(dev, gvt, ops);
+}
+
+/**
+ * intel_gvt_hypervisor_host_exit - exit GVT-g host side
+ */
+static inline void intel_gvt_hypervisor_host_exit(struct device *dev,
+			void *gvt)
+{
+	/* optional to provide */
+	if (!intel_gvt_host.mpt->host_exit)
+		return;
+
+	intel_gvt_host.mpt->host_exit(dev, gvt);
 }
 
 /**
@@ -64,6 +81,10 @@ static inline int intel_gvt_hypervisor_detect_host(void)
  */
 static inline int intel_gvt_hypervisor_attach_vgpu(struct intel_vgpu *vgpu)
 {
+	/* optional to provide */
+	if (!intel_gvt_host.mpt->attach_vgpu)
+		return 0;
+
 	return intel_gvt_host.mpt->attach_vgpu(vgpu, &vgpu->handle);
 }
 
@@ -76,6 +97,10 @@ static inline int intel_gvt_hypervisor_attach_vgpu(struct intel_vgpu *vgpu)
  */
 static inline void intel_gvt_hypervisor_detach_vgpu(struct intel_vgpu *vgpu)
 {
+	/* optional to provide */
+	if (!intel_gvt_host.mpt->detach_vgpu)
+		return;
+
 	intel_gvt_host.mpt->detach_vgpu(vgpu->handle);
 }
 
@@ -224,11 +249,6 @@ static inline unsigned long intel_gvt_hypervisor_gfn_to_mfn(
 	return intel_gvt_host.mpt->gfn_to_mfn(vgpu->handle, gfn);
 }
 
-enum {
-	GVT_MAP_APERTURE = 0,
-	GVT_MAP_OPREGION,
-};
-
 /**
  * intel_gvt_hypervisor_map_gfn_to_mfn - map a GFN region to MFN
  * @vgpu: a vGPU
@@ -236,7 +256,6 @@ enum {
  * @mfn: host PFN
  * @nr: amount of PFNs
  * @map: map or unmap
- * @type: map type
  *
  * Returns:
  * Zero on success, negative error code if failed.
@@ -244,10 +263,14 @@ enum {
 static inline int intel_gvt_hypervisor_map_gfn_to_mfn(
 		struct intel_vgpu *vgpu, unsigned long gfn,
 		unsigned long mfn, unsigned int nr,
-		bool map, int type)
+		bool map)
 {
+	/* a MPT implementation could have MMIO mapped elsewhere */
+	if (!intel_gvt_host.mpt->map_gfn_to_mfn)
+		return 0;
+
 	return intel_gvt_host.mpt->map_gfn_to_mfn(vgpu->handle, gfn, mfn, nr,
-						  map, type);
+						  map);
 }
 
 /**
@@ -263,6 +286,10 @@ static inline int intel_gvt_hypervisor_map_gfn_to_mfn(
 static inline int intel_gvt_hypervisor_set_trap_area(
 		struct intel_vgpu *vgpu, u64 start, u64 end, bool map)
 {
+	/* a MPT implementation could have MMIO trapped elsewhere */
+	if (!intel_gvt_host.mpt->set_trap_area)
+		return 0;
+
 	return intel_gvt_host.mpt->set_trap_area(vgpu->handle, start, end, map);
 }
 

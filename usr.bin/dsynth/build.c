@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 The DragonFly Project.  All rights reserved.
+ * Copyright (c) 2019-2020 The DragonFly Project.  All rights reserved.
  *
  * This code is derived from software contributed to The DragonFly Project
  * by Matthew Dillon <dillon@backplane.com>
@@ -72,12 +72,14 @@ static int mptylogpoll(int ptyfd, int fdlog, wmsg_t *wmsg,
 static void doHook(pkg_t *pkg, const char *id, const char *path, int waitfor);
 static void childHookRun(bulk_t *bulk);
 static void adjloadavg(double *dload);
+static void check_packaged(const char *dbmpath, pkg_t *pkgs);
 
 static worker_t *SigWork;
 static int MasterPtyFd = -1;
 static int CopyFileFd = -1;
 static pid_t SigPid;
 static const char *WorkerFlavorPrt = "";	/* "" or "@flavor" */
+static DBM *CheckDBM;
 
 #define MPTY_FAILED	-2
 #define MPTY_AGAIN	-1
@@ -90,6 +92,7 @@ int BuildSkipCount;
 int BuildIgnoreCount;
 int BuildFailCount;
 int BuildSuccessCount;
+int BuildMissingCount;
 
 /*
  * Initialize the WorkerAry[]
@@ -167,6 +170,7 @@ DoBuild(pkg_t *pkgs)
 	time_t startTime;
 	time_t t;
 	int h, m, s;
+	char *dbmpath;
 
 	/*
 	 * We use our bulk system to run hooks.  This will be for
@@ -184,14 +188,22 @@ DoBuild(pkg_t *pkgs)
 			++BuildTotal;
 	}
 
+	/*
+	 * Remove binary package files for dports whos directory
+	 * has changed.
+	 */
+	asprintf(&dbmpath, "%s/ports_crc", BuildBase);
+	CheckDBM = dbm_open(dbmpath, O_CREAT|O_RDWR, 0644);
+	check_packaged(dbmpath, pkgs);
+
 	doHook(NULL, "hook_run_start", HookRunStart, 1);
 
 	/*
 	 * The pkg and pkg-static binaries are needed.  If already present
-	 * then assume that the template is also valid, otherwise build
-	 * both.
+	 * then assume that the template is also valid, otherwise add to
+	 * the list and build both.
 	 */
-	scan = GetPkgPkg(pkgs);
+	scan = GetPkgPkg(&pkgs);
 
 	/*
 	 * Create our template.  The template will be missing pkg
@@ -304,6 +316,21 @@ DoBuild(pkg_t *pkgs)
 	}
 	pthread_mutex_unlock(&WorkerMutex);
 
+	/*
+	 * What is left that cannot be built?  The list really ought to be
+	 * empty at this point, report anything that remains.
+	 */
+	for (scan = pkgs; scan; scan = scan->bnext) {
+		if (scan->flags & (PKGF_SUCCESS | PKGF_FAILURE))
+			continue;
+		dlog(DLOG_ABN, "[XXX] %s lost in the ether [flags=%08x]\n",
+		     scan->portdir, scan->flags);
+		++BuildMissingCount;
+	}
+
+	/*
+	 * Final updates
+	 */
 	RunStatsUpdateTop(0);
 	RunStatsUpdateLogs();
 	RunStatsSync();
@@ -321,6 +348,11 @@ DoBuild(pkg_t *pkgs)
 	m = t / 60 % 60;
 	s = t % 60;
 
+	if (CheckDBM) {
+		dbm_close(CheckDBM);
+		CheckDBM = NULL;
+	}
+
 	dlog(DLOG_ALL|DLOG_STDOUT,
 		"\n"
 		"Initial queue size: %d\n"
@@ -328,6 +360,7 @@ DoBuild(pkg_t *pkgs)
 		"           ignored: %d\n"
 		"           skipped: %d\n"
 		"            failed: %d\n"
+		"           missing: %d\n"
 		"\n"
 		"Duration: %02d:%02d:%02d\n"
 		"\n",
@@ -336,6 +369,7 @@ DoBuild(pkg_t *pkgs)
 		BuildIgnoreCount,
 		BuildSkipCount,
 		BuildFailCount,
+		BuildMissingCount,
 		h, m, s);
 }
 
@@ -424,8 +458,8 @@ build_find_leaves(pkg_t *parent, pkg_t *pkg, pkg_t ***build_tailp,
 
 		/*
 		 * ERROR includes FAILURE, which is set in numerous situations
-		 * including when NOBUILD state is processed.  So check for
-		 * NOBUILD state first.
+		 * including when NOBUILD state is finally processed.  So
+		 * check for NOBUILD state first.
 		 *
 		 * An ERROR in a sub-package causes a NOBUILD in packages
 		 * that depend on it.
@@ -526,14 +560,23 @@ skip_to_flavor:
 	pkg->flags |= *app & ~PKGF_NOTREADY;
 
 	/*
-	 * Clear PACKAGED bit if sub-dependencies aren't clean
+	 * Clear the PACKAGED bit if sub-dependencies aren't clean.
+	 *
+	 * NOTE: PKGF_NOTREADY is not stored in pkg->flags, only in *app,
+	 *	 so incorporate *app to test for it.
 	 */
 	if ((pkg->flags & PKGF_PACKAGED) &&
-	    (pkg->flags & (PKGF_NOTREADY|PKGF_ERROR|PKGF_NOBUILD))) {
+	    ((pkg->flags | *app) & (PKGF_NOTREADY|PKGF_ERROR|PKGF_NOBUILD))) {
 		pkg->flags &= ~PKGF_PACKAGED;
 		ddassert(pkg->pkgfile);
 		asprintf(&buf, "%s/%s", RepositoryPath, pkg->pkgfile);
-		if (remove(buf) < 0) {
+		if (OverridePkgDeleteOpt >= 1) {
+			pkg->flags |= PKGF_PACKAGED;
+			dlog(DLOG_ALL,
+			     "[XXX] %s DELETE-PACKAGE %s "
+			     "(OVERRIDE, NOT DELETED)\n",
+			     pkg->portdir, buf);
+		} else if (remove(buf) < 0) {
 			dlog(DLOG_ALL,
 			     "[XXX] %s DELETE-PACKAGE %s (failed)\n",
 			     pkg->portdir, buf);
@@ -550,8 +593,9 @@ skip_to_flavor:
 	/*
 	 * Set PKGF_NOBUILD_I if there is IGNORE data
 	 */
-	if (pkg->ignore)
+	if (pkg->ignore) {
 		pkg->flags |= PKGF_NOBUILD_I;
+	}
 
 	/*
 	 * Handle propagated flags
@@ -587,28 +631,34 @@ skip_to_flavor:
 		 * dummy packages are not counted in the total, so do not
 		 * decrement BuildTotal.
 		 *
-		 * Do not propagate *app up for the dummy node.  If there
-		 * is a generic dependency (i.e. no flavor specified), the
-		 * upper recursion detects PKGF_DUMMY and traverses through
-		 * to the default flavor without checking error/nobuild
-		 * flags.
+		 * Do not propagate *app up for the dummy node or add it to
+		 * the build list.  The dummy node itself is not an actual
+		 * dependency.  Packages which depend on the default flavor
+		 * (aka this dummy node) actually depend on the first flavor
+		 * under this node.
+		 *
+		 * So if there is a generic dependency (i.e. no flavor
+		 * specified), the upper recursion detects PKGF_DUMMY and
+		 * traverses through the dummy node to the default flavor
+		 * without checking the error/nobuild flags on this dummy
+		 * node.
 		 */
 		if (pkg->flags & PKGF_NOBUILD) {
-			ddprintf(depth, "} (DUMMY/META - IGNORED)\n");
+			ddprintf(depth, "} (DUMMY/META - IGNORED "
+				 "- MARK SUCCESS ANYWAY)\n");
 		} else {
 			ddprintf(depth, "} (DUMMY/META - SUCCESS)\n");
-			pkg->flags |= PKGF_SUCCESS;
-			*hasworkp = 1;
-			if (first) {
-				dlog(DLOG_ALL | DLOG_FILTER,
-				     "[XXX] %s META-ALREADY-BUILT\n",
-				     pkg->portdir);
-			} else {
-				dlog(DLOG_SUCC, "[XXX] %s meta-node complete\n",
-				     pkg->portdir);
-				RunStatsUpdateCompletion(NULL, DLOG_SUCC, pkg,
-							 "", "");
-			}
+		}
+		pkg->flags |= PKGF_SUCCESS;
+		*hasworkp = 1;
+		if (first) {
+			dlog(DLOG_ALL | DLOG_FILTER,
+			     "[XXX] %s META-ALREADY-BUILT\n",
+			     pkg->portdir);
+		} else {
+			dlog(DLOG_SUCC, "[XXX] %s meta-node complete\n",
+			     pkg->portdir);
+			RunStatsUpdateCompletion(NULL, DLOG_SUCC, pkg, "", "");
 		}
 	} else if (pkg->flags & PKGF_PACKAGED) {
 		/*
@@ -621,9 +671,15 @@ skip_to_flavor:
 		*hasworkp = 1;
 		if (first) {
 			dlog(DLOG_ALL | DLOG_FILTER,
-			     "[XXX] %s ALREADY-BUILT\n",
+			     "[XXX] %s Already-Built\n",
 			     pkg->portdir);
 			--BuildTotal;
+		} else {
+			dlog(DLOG_ABN | DLOG_FILTER,
+			     "[XXX] %s flags=%08x Packaged Unexpectedly\n",
+			     pkg->portdir, pkg->flags);
+			/* ++BuildSuccessTotal; XXX not sure */
+			goto addlist;
 		}
 	} else {
 		/*
@@ -634,6 +690,7 @@ skip_to_flavor:
 		 * NOTE: The NOBUILD case propagates to here as well
 		 *	 and is ultimately handled by startbuild().
 		 */
+addlist:
 		*hasworkp = 1;
 		if (pkg->flags & PKGF_NOBUILD_I)
 			ddprintf(depth, "} (ADDLIST(IGNORE/BROKEN) - %s)\n",
@@ -646,6 +703,7 @@ skip_to_flavor:
 		pkg->flags |= PKGF_BUILDLIST;
 		**build_tailp = pkg;
 		*build_tailp = &pkg->build_next;
+		pkg->build_next = NULL;
 		*app |= PKGF_NOTREADY;
 	}
 
@@ -1115,6 +1173,16 @@ workercomplete(worker_t *work)
 			doHook(pkg, "hook_pkg_failure", HookPkgFailure, 0);
 		}
 	} else {
+		if (CheckDBM) {
+			datum key;
+			datum data;
+
+			key.dptr = pkg->portdir;
+			key.dsize = strlen(pkg->portdir);
+			data.dptr = &pkg->crc32;
+			data.dsize = sizeof(pkg->crc32);
+			dbm_store(CheckDBM, key, data, DBM_REPLACE);
+		}
 		pkg->flags |= PKGF_SUCCESS;
 		++BuildSuccessCount;
 		dlog(DLOG_SUCC | DLOG_GRN,
@@ -2226,9 +2294,15 @@ dophase(worker_t *work, wmsg_t *wmsg, int wdog, int phaseid, const char *phase)
 	 */
 	if (pid == 0) {
 		/*
-		 * Slave waits for handshake
+		 * Slave nices itself and waits for handshake
 		 */
 		char ttybuf[2];
+
+		/*
+		 * Self-nice to be nice (ignore any error)
+		 */
+		if (NiceOpt)
+			setpriority(PRIO_PROCESS, 0, NiceOpt);
 
 		read(0, ttybuf, 1);
 	} else {
@@ -2985,7 +3059,7 @@ childHookRun(bulk_t *bulk)
 	benv[bi].label = NULL;
 	benv[bi].data = NULL;
 
-	fp = dexec_open(cav, cac, &pid, benv, 0, 0);
+	fp = dexec_open(bulk->s1, cav, cac, &pid, benv, 0, 0);
 	while ((ptr = fgetln(fp, &len)) != NULL)
 		;
 
@@ -3022,4 +3096,59 @@ adjloadavg(double *dload)
 #else
 	dload[0] += 0.0;	/* just avoid compiler 'unused' warnings */
 #endif
+}
+
+/*
+ * Check if the ports directory contents has changed and force a
+ * package to be rebuilt if it has by clearing the PACKAGED bit.
+ */
+static
+void
+check_packaged(const char *dbmpath, pkg_t *pkgs)
+{
+	pkg_t *scan;
+	datum key;
+	datum data;
+	char *buf;
+
+	if (CheckDBM == NULL) {
+		dlog(DLOG_ABN, "[XXX] Unable to open/create dbm %s\n", dbmpath);
+		return;
+	}
+	for (scan = pkgs; scan; scan = scan->bnext) {
+		if ((scan->flags & PKGF_PACKAGED) == 0)
+			continue;
+		key.dptr = scan->portdir;
+		key.dsize = strlen(scan->portdir);
+		data = dbm_fetch(CheckDBM, key);
+		if (data.dptr && data.dsize == sizeof(uint32_t) &&
+		    *(uint32_t *)data.dptr != scan->crc32) {
+			scan->flags &= ~PKGF_PACKAGED;
+			asprintf(&buf, "%s/%s", RepositoryPath, scan->pkgfile);
+			if (OverridePkgDeleteOpt >= 2) {
+				scan->flags |= PKGF_PACKAGED;
+				dlog(DLOG_ALL,
+				     "[XXX] %s DELETE-PACKAGE %s "
+				     "(port content changed CRC %08x/%08x "
+				     "OVERRIDE, NOT DELETED)\n",
+				     scan->portdir, buf,
+				     *(uint32_t *)data.dptr, scan->crc32);
+			} else if (remove(buf) < 0) {
+				dlog(DLOG_ALL,
+				     "[XXX] %s DELETE-PACKAGE %s (failed)\n",
+				     scan->portdir, buf);
+			} else {
+				dlog(DLOG_ALL,
+				     "[XXX] %s DELETE-PACKAGE %s "
+				     "(port content changed CRC %08x/%08x)\n",
+				     scan->portdir, buf,
+				     *(uint32_t *)data.dptr, scan->crc32);
+			}
+			freestrp(&buf);
+		} else if (data.dptr == NULL) {
+			data.dptr = &scan->crc32;
+			data.dsize = sizeof(scan->crc32);
+			dbm_store(CheckDBM, key, data, DBM_REPLACE);
+		}
+	}
 }

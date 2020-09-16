@@ -135,6 +135,10 @@
             ..
             uk_UA.UTF-8
             ..
+            zh_Hans_CN.UTF-8
+            ..
+            zh_Hant_TW.UTF-8
+            ..
         ..
         dict
         ..
@@ -180,6 +184,8 @@
                 ..
             ..
             find_interface
+            ..
+            getdate
             ..
             ipfw
             ..
@@ -925,13 +931,23 @@
             ..
             Australia
             ..
+            Brazil
+            ..
+            Canada
+            ..
+            Chile
+            ..
             Etc
             ..
             Europe
             ..
             Indian
             ..
+            Mexico
+            ..
             Pacific
+            ..
+            US
             ..
         ..
     ..

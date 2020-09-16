@@ -2404,8 +2404,11 @@ Sized_relobj_file<size, big_endian>::compute_final_local_value_internal(
 	    {
 	      // This is not a section symbol.  We can determine
 	      // the final value now.
-	      lv_out->set_output_value(
-		  os->output_address(this, shndx, lv_in->input_value()));
+	      uint64_t value =
+		os->output_address(this, shndx, lv_in->input_value());
+	      if (relocatable)
+		value -= os->address();
+	      lv_out->set_output_value(value);
 	    }
 	  else if (!os->find_starting_output_address(this, shndx, &start))
 	    {
@@ -2419,10 +2422,10 @@ Sized_relobj_file<size, big_endian>::compute_final_local_value_internal(
 		os->find_relaxed_input_section(this, shndx);
 	      if (posd != NULL)
 		{
-		  Address relocatable_link_adjustment =
-		    relocatable ? os->address() : 0;
-		  lv_out->set_output_value(posd->address()
-					   - relocatable_link_adjustment);
+		  uint64_t value = posd->address();
+		  if (relocatable)
+		    value -= os->address();
+		  lv_out->set_output_value(value);
 		}
 	      else
 		lv_out->set_output_value(os->address());
@@ -2676,7 +2679,6 @@ Sized_relobj_file<size, big_endian>::write_local_symbols(
       elfcpp::Sym<size, big_endian> isym(psyms);
 
       Symbol_value<size>& lv(this->local_values_[i]);
-      typename elfcpp::Elf_types<size>::Elf_Addr sym_value = lv.value(this, 0);
 
       bool is_ordinary;
       unsigned int st_shndx = this->adjust_sym_shndx(i, isym.get_st_shndx(),
@@ -2686,9 +2688,6 @@ Sized_relobj_file<size, big_endian>::write_local_symbols(
 	  gold_assert(st_shndx < out_sections.size());
 	  if (out_sections[st_shndx] == NULL)
 	    continue;
-	  // In relocatable object files symbol values are section relative.
-	  if (parameters->options().relocatable())
-	    sym_value -= out_sections[st_shndx]->address();
 	  st_shndx = out_sections[st_shndx]->out_shndx();
 	  if (st_shndx >= elfcpp::SHN_LORESERVE)
 	    {
@@ -2708,7 +2707,7 @@ Sized_relobj_file<size, big_endian>::write_local_symbols(
 	  gold_assert(isym.get_st_name() < strtab_size);
 	  const char* name = pnames + isym.get_st_name();
 	  osym.put_st_name(sympool->get_offset(name));
-	  osym.put_st_value(sym_value);
+	  osym.put_st_value(lv.value(this, 0));
 	  osym.put_st_size(isym.get_st_size());
 	  osym.put_st_info(isym.get_st_info());
 	  osym.put_st_other(isym.get_st_other());
@@ -2726,7 +2725,7 @@ Sized_relobj_file<size, big_endian>::write_local_symbols(
 	  gold_assert(isym.get_st_name() < strtab_size);
 	  const char* name = pnames + isym.get_st_name();
 	  osym.put_st_name(dynpool->get_offset(name));
-	  osym.put_st_value(sym_value);
+	  osym.put_st_value(lv.value(this, 0));
 	  osym.put_st_size(isym.get_st_size());
 	  osym.put_st_info(isym.get_st_info());
 	  osym.put_st_other(isym.get_st_other());

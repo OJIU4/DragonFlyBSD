@@ -51,7 +51,6 @@ DPORTS_PACKAGES?=	security/ca_root_nss \
 			dns/bind-tools \
 			net/isc-dhcp44-server \
 			sysutils/cdrtools \
-			security/wpa_supplicant \
 			${DPORTS_EXTRA_PACKAGES}
 
 # dports options to use when building packages
@@ -225,7 +224,13 @@ customizeiso:
 	@test -O ${.CURDIR} || echo "chowning copied files to root:wheel"
 	@test -O ${.CURDIR} || ((cd ${ROOTSKEL} && find .) | fgrep -v cpignore | (cd ${ISOROOT} && xargs chown root:wheel))
 .endfor
+
 	pwd_mkdb -p -d ${ISOROOT}/etc ${ISOROOT}/etc/master.passwd
+	pw -V ${ISOROOT}/etc useradd installer -o -u 0 -g 0 \
+		-c "DragonFly Installer" -d /root -s /usr/sbin/installer
+	${CHROOT_CMD} "chpass -p '' root"
+	${CHROOT_CMD} "chpass -p '' installer"
+
 .for UPGRADE_ITEM in Makefile			\
 		     etc.${MACHINE_ARCH} 	\
 		     rc.d/Makefile		\
@@ -253,7 +258,7 @@ pkgs:
 	${CHROOT_CMD} "pkg search --exact --search origin ${PKG}" || \
 	{ \
 		echo "ERROR: Cannot find the package for port '${PKG}'!"; \
-		echo "-----> Use 'pkg_${PKG}=<pkg-name>' to specify the package name."; \
+		echo "-----> Use 'PKG_${PKG}=<pkg-name>' to specify the package name."; \
 		false; \
 	}
 .endfor
@@ -285,7 +290,7 @@ pkgs:
 	${CHROOT_CMD} "cd /usr/dports/${PKG} && make ${DPORTS_OPTIONS} clean"
 .endfor
 
-	${CHROOT_CMD} "yes | pkg autoremove"
+	${CHROOT_CMD} "pkg autoremove --yes"
 
 	-umount ${ISOROOT}/usr/distfiles
 	umount ${ISOROOT}/usr/dports
@@ -304,11 +309,17 @@ pkgs:
 	umount ${ISOROOT}/dev
 	rm -f ${ISOROOT}/etc/resolv.conf
 
+.if exists(${ISOROOT}/usr/local/etc)
+	echo "dummy /usr/local/etc tmpfs rw,-C 0 0" >> ${ISOROOT}/etc/fstab
+.endif
+
 	# Recopy files that dports may have updated in /etc into /etc.hdd
 	#
 	cpdup ${ISOROOT}/etc/shells ${ISOROOT}/etc.hdd/shells
 	cpdup ${ISOROOT}/etc/group ${ISOROOT}/etc.hdd/group
-.endif
+	cpdup ${ISOROOT}/etc/passwd ${ISOROOT}/etc.hdd/passwd
+	cpdup ${ISOROOT}/etc/master.passwd ${ISOROOT}/etc.hdd/master.passwd
+.endif  # !empty(DPORTS_PACKAGES)
 
 mkiso:
 	if [ ! -d ${IMGMNT} ]; then mkdir -p ${IMGMNT}; fi
@@ -394,6 +405,8 @@ mkimg:
 	-fgrep -v kernel_options ${IMGMNT}/boot/loader.conf > ${IMGMNT}/boot/loader.conf.new
 	echo 'vfs.root.mountfrom="ufs:part-by-label/${LABEL}.a"' >> ${IMGMNT}/boot/loader.conf.new
 	mv ${IMGMNT}/boot/loader.conf.new ${IMGMNT}/boot/loader.conf
+	@echo "STEP: create /firstboot"
+	touch ${IMGMNT}/firstboot
 	@echo "STEP: cleanup"
 	df ${IMGMNT}
 	sync
@@ -420,7 +433,8 @@ realclean:	clean
 	rm -rf ${ISODIR}/packages
 	rm -rf ${ISODIR}/distfiles
 
-help all:
+.MAIN: help
+help:
 	@echo "Targets:"
 	@echo "  release     - full build from scratch"
 	@echo "  quick       - attempt to do an incremental rebuild"

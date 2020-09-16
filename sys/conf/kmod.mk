@@ -152,8 +152,6 @@ CFLAGS+=	${DEBUG_FLAGS}
 CFLAGS+=	-fno-omit-frame-pointer
 .endif
 
-.include <bsd.patch.mk>
-
 .if defined(FIRMWS)
 #AWK=/usr/bin/awk
 .if !exists(@)
@@ -184,7 +182,7 @@ OBJS+=	${_firmw:C/\:.*$/.fwo/}
 .endfor
 .endif
 
-OBJS+=  ${SRCS:N*.h:N*.patch:R:S/$/.o/g}
+OBJS+=  ${SRCS:N*.h:R:S/$/.o/g}
 
 .if !defined(PROG)
 PROG=	${KMOD}.ko
@@ -433,8 +431,8 @@ assym.s: @/kern/genassym.sh
 genassym.o: @/platform/${MACHINE_PLATFORM}/${MACHINE_ARCH}/genassym.c
 .endif
 genassym.o: @ ${SRCS:Mopt_*.h}
-	${CC} -c ${CFLAGS:N-fno-common:N-flto:N-mcmodel=small} ${WERROR} \
-	@/platform/${MACHINE_PLATFORM}/${MACHINE_ARCH}/genassym.c
+	${CC} -c ${CFLAGS:N-fno-common:N-flto:N-mcmodel=small} -fcommon \
+	${WERROR} @/platform/${MACHINE_PLATFORM}/${MACHINE_ARCH}/genassym.c
 .endif
 
 regress:

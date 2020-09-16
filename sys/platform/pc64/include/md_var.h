@@ -33,6 +33,8 @@
 #ifndef _MACHINE_MD_VAR_H_
 #define	_MACHINE_MD_VAR_H_
 
+#include <sys/types.h>
+
 #include <machine/globaldata.h>
 
 /*
@@ -42,14 +44,17 @@
 extern	u_long	atdevbase;	/* offset in virtual memory of ISA io mem */
 extern	int	busdma_swi_pending;
 extern	void	(*cpu_idle_hook)(void);
-extern	void	cpu_idle(void);
+void		cpu_idle(void);
 extern	u_int	cpu_exthigh;
 extern	u_int	via_feature_rng;
 extern	u_int	via_feature_xcrypt;
 extern	u_int	amd_feature;
 extern	u_int	amd_feature2;
+extern	u_long	cpu_ia32_arch_caps;
 extern	u_int	cpu_clflush_line_size;
 extern	u_int	cpu_stdext_feature;
+extern	u_int	cpu_stdext_feature2;
+extern	u_int	cpu_stdext_feature3;
 extern	u_int	cpu_thermal_feature;
 extern	u_int	cpu_mwait_feature;
 extern	u_int	cpu_mwait_extemu;

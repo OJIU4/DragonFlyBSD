@@ -23,13 +23,14 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD: head/lib/libefivar/libefivar_int.h 307071 2016-10-11 22:30:41Z imp $
+ * $FreeBSD: head/stand/efi/include/efichar.h 323258 2017-09-07 07:30:05Z imp $
  */
 
-#ifndef _LIBEFI_INT_H_
-#define	_LIBEFI_INT_H_
+#ifndef _BOOT_EFI_EFICHAR_H_
+#define	_BOOT_EFI_EFICHAR_H_
 
-int libefi_ucs2_to_utf8(const efi_char *, char **);
-int libefi_utf8_to_ucs2(const char *, efi_char **, size_t *);
+int ucs2_to_utf8(const efi_char *, char **);
+int utf8_to_ucs2(const char *, efi_char **, size_t *);
+int ucs2len(const efi_char *);
 
-#endif /* _LIBEFI_INT_H_ */
+#endif /* _BOOT_EFI_EFICHAR_H_ */

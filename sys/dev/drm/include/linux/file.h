@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018 François Tigeot <ftigeot@wolfpond.org>
+ * Copyright (c) 2018-2020 François Tigeot <ftigeot@wolfpond.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,5 +30,30 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/posix_types.h>
+
+static inline int
+get_unused_fd_flags(unsigned flags)
+{
+	kprintf("get_unused_fd_flags(): not implemented\n");
+	return -1;
+}
+
+static inline void
+fd_install(unsigned int fd, struct file *file)
+{
+	kprintf("fd_install(): not implemented\n");
+}
+
+static inline void
+fput(struct file *file)
+{
+	kprintf("fput(): not implemented\n");
+}
+
+static inline void
+put_unused_fd(unsigned int fd)
+{
+	kprintf("put_unused_fd(): not implemented\n");
+}
 
 #endif	/* _LINUX_FILE_H_ */

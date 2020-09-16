@@ -253,37 +253,6 @@ hammer2_dirhash(const unsigned char *name, size_t len)
 	return (key);
 }
 
-#if 0
-/*
- * Return the power-of-2 radix greater or equal to
- * the specified number of bytes.
- *
- * Always returns at least the minimum media allocation
- * size radix, HAMMER2_RADIX_MIN (10), which is 1KB.
- */
-int
-hammer2_allocsize(size_t bytes)
-{
-	int radix;
-
-	if (bytes < HAMMER2_ALLOC_MIN)
-		bytes = HAMMER2_ALLOC_MIN;
-	if (bytes == HAMMER2_PBUFSIZE)
-		radix = HAMMER2_PBUFRADIX;
-	else if (bytes >= 16384)
-		radix = 14;
-	else if (bytes >= 1024)
-		radix = 10;
-	else
-		radix = HAMMER2_RADIX_MIN;
-
-	while (((size_t)1 << radix) < bytes)
-		++radix;
-	return (radix);
-}
-
-#endif
-
 /*
  * Convert bytes to radix with no limitations.
  *
@@ -372,11 +341,11 @@ hammer2_update_time(uint64_t *timep)
 }
 
 void
-hammer2_adjreadcounter(hammer2_blockref_t *bref, size_t bytes)
+hammer2_adjreadcounter(int btype, size_t bytes)
 {
 	long *counterp;
 
-	switch(bref->type) {
+	switch(btype) {
 	case HAMMER2_BREF_TYPE_DATA:
 		counterp = &hammer2_iod_file_read;
 		break;
@@ -391,9 +360,44 @@ hammer2_adjreadcounter(hammer2_blockref_t *bref, size_t bytes)
 	case HAMMER2_BREF_TYPE_FREEMAP_LEAF:
 		counterp = &hammer2_iod_fmap_read;
 		break;
-	default:
+	case HAMMER2_BREF_TYPE_FREEMAP:
+	case HAMMER2_BREF_TYPE_VOLUME:
 		counterp = &hammer2_iod_volu_read;
 		break;
+	case HAMMER2_BREF_TYPE_EMPTY:
+	default:
+		return;
+	}
+	*counterp += bytes;
+}
+
+void
+hammer2_adjwritecounter(int btype, size_t bytes)
+{
+	long *counterp;
+
+	switch(btype) {
+	case HAMMER2_BREF_TYPE_DATA:
+		counterp = &hammer2_iod_file_write;
+		break;
+	case HAMMER2_BREF_TYPE_DIRENT:
+	case HAMMER2_BREF_TYPE_INODE:
+		counterp = &hammer2_iod_meta_write;
+		break;
+	case HAMMER2_BREF_TYPE_INDIRECT:
+		counterp = &hammer2_iod_indr_write;
+		break;
+	case HAMMER2_BREF_TYPE_FREEMAP_NODE:
+	case HAMMER2_BREF_TYPE_FREEMAP_LEAF:
+		counterp = &hammer2_iod_fmap_write;
+		break;
+	case HAMMER2_BREF_TYPE_FREEMAP:
+	case HAMMER2_BREF_TYPE_VOLUME:
+		counterp = &hammer2_iod_volu_write;
+		break;
+	case HAMMER2_BREF_TYPE_EMPTY:
+	default:
+		return;
 	}
 	*counterp += bytes;
 }
@@ -467,9 +471,9 @@ hammer2_error_str(int error)
 }
 
 const char *
-hammer2_bref_type_str(hammer2_blockref_t *bref)
+hammer2_bref_type_str(int btype)
 {
-	switch(bref->type) {
+	switch(btype) {
 	case HAMMER2_BREF_TYPE_EMPTY:
 		return("Unknown-zero'd field");
 	case HAMMER2_BREF_TYPE_INODE:

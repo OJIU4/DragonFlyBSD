@@ -58,10 +58,6 @@
 #define USAGE "[-dv] [-c file] [-n nickname] [-t target] [variable=value ...]"
 #define OPTIONS	"vdc:t:n:"
 
-#ifndef DEBUG
-//int	vflag;
-#endif
-
 token_t AuthMethods[] = {
      {"None",	NONE},
      {"KRB5",	KRB5},
@@ -78,6 +74,9 @@ token_t	DigestMethods[] = {
      {"CRC32C",	1},
      {0, 0}
 };
+
+int	vflag;
+char	*iscsidev;
 
 u_char	isid[6 + 6];
 /*
@@ -105,11 +104,11 @@ isc_opt_t opvals = {
      .maxOutstandingR2T		= 1,
      .errorRecoveryLevel	= 0,
 
-     .dataPDUInOrder		= TRUE,
-     .dataSequenceInOrder	= TRUE,
+     .dataPDUInOrder		= true,
+     .dataSequenceInOrder	= true,
 
-     .initialR2T		= TRUE,
-     .immediateData		= TRUE,
+     .initialR2T		= true,
+     .immediateData		= true,
 };
 
 int

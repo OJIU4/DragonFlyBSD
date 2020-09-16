@@ -160,7 +160,7 @@
 #include <sys/proc.h>
 #include <sys/lock.h>
 #include <sys/sysctl.h>
-#include <sys/sysproto.h>
+#include <sys/sysmsg.h>
 #include <sys/spinlock.h>
 #include <sys/csprng.h>
 #include <sys/malloc.h>
@@ -744,7 +744,7 @@ sysctl_kern_random(SYSCTL_HANDLER_ARGS)
 }
 
 int
-sys_getrandom(struct getrandom_args *uap)
+sys_getrandom(struct sysmsg *sysmsg, const struct getrandom_args *uap)
 {
 	char buf[256];
 	ssize_t bytes;
@@ -780,7 +780,7 @@ sys_getrandom(struct getrandom_args *uap)
 		}
 	}
 	if (error == 0)
-		uap->sysmsg_szresult = r;
+		sysmsg->sysmsg_szresult = r;
 
 	return error;
 }
@@ -872,7 +872,7 @@ rand_thread_loop(void *dummy)
 		 * Go faster in the first 1200 seconds after boot.  This effects
 		 * the time-after-next interrupt (pipeline delay).
 		 */
-		count = sys_cputimer->freq * (count + 256) / (256 * 10);
+		count = muldivu64(sys_cputimer->freq, count + 256, 256 * 10);
 		if (time_uptime < 120)
 			count = count / 10 + 1;
 		systimer_rand.periodic = count;

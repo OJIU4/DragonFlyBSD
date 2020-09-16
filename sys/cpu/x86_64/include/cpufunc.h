@@ -263,18 +263,7 @@ cpu_amdcpubug_dfly01(void)
 static __inline int
 ffs(int mask)
 {
-#if 0
-	/*
-	 * Note that gcc-2's builtin ffs would be used if we didn't declare
-	 * this inline or turn off the builtin.  The builtin is faster but
-	 * broken in gcc-2.4.5 and slower but working in gcc-2.5 and later
-	 * versions.
-	 */
-	return (mask == 0 ? mask : (int)bsfl((u_int)mask) + 1);
-#else
-	/* Actually, the above is way out of date.  The builtins use cmov etc */
 	return (__builtin_ffs(mask));
-#endif
 }
 
 #define	HAVE_INLINE_FFSL
@@ -282,7 +271,7 @@ ffs(int mask)
 static __inline int
 ffsl(long mask)
 {
-	return (mask == 0 ? mask : (int)bsfq((u_long)mask) + 1);
+	return (__builtin_ffsl(mask));
 }
 
 #define	HAVE_INLINE_FLS
@@ -688,10 +677,10 @@ cpu_invltlb(void)
 
 #endif
 
-extern void smp_invltlb(void);
-extern void smp_sniff(void);
-extern void cpu_sniff(int dcpu);
-extern void hard_sniff(struct trapframe *tf);
+void smp_invltlb(void);
+void smp_sniff(void);
+void cpu_sniff(int);
+void hard_sniff(struct trapframe *);
 
 static __inline u_short
 rfs(void)
@@ -986,6 +975,8 @@ void	intr_restore(register_t rf);
 int	rdmsr_safe(u_int msr, uint64_t *val);
 int wrmsr_safe(u_int msr, uint64_t newval);
 void	reset_dbregs(void);
+void	smap_open(void);
+void	smap_close(void);
 
 __END_DECLS
 

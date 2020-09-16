@@ -235,10 +235,10 @@ read_media(int fd, const hammer2_blockref_t *bref, hammer2_media_data_t *media,
 		return 0;
 
 	io_off = bref->data_off & ~HAMMER2_OFF_MASK_RADIX;
-	io_base = io_off & ~(hammer2_off_t)(HAMMER2_MINIOSIZE - 1);
+	io_base = io_off & ~(hammer2_off_t)(HAMMER2_LBUFSIZE - 1);
 	boff = io_off - io_base;
 
-	io_bytes = HAMMER2_MINIOSIZE;
+	io_bytes = HAMMER2_LBUFSIZE;
 	while (io_bytes + boff < bytes)
 		io_bytes <<= 1;
 
@@ -280,10 +280,10 @@ write_media(int fd, const hammer2_blockref_t *bref,
 	assert(bytes == media_bytes);
 
 	io_off = bref->data_off & ~HAMMER2_OFF_MASK_RADIX;
-	io_base = io_off & ~(hammer2_off_t)(HAMMER2_MINIOSIZE - 1);
+	io_base = io_off & ~(hammer2_off_t)(HAMMER2_LBUFSIZE - 1);
 	boff = io_off - io_base;
 
-	io_bytes = HAMMER2_MINIOSIZE;
+	io_bytes = HAMMER2_LBUFSIZE;
 	while (io_bytes + boff < bytes)
 		io_bytes <<= 1;
 
@@ -535,8 +535,8 @@ main(int argc, char **argv)
 		perror("fstat");
 		exit(1);
 	}
-	if (!S_ISCHR(st.st_mode)) {
-		fprintf(stderr, "%s is not a block device\n", devpath);
+	if (!S_ISCHR(st.st_mode) && !S_ISREG(st.st_mode)) {
+		fprintf(stderr, "Unsupported file type\n");
 		exit(1);
 	}
 

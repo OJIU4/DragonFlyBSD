@@ -4,10 +4,13 @@
 
 # DragonFly BSD source repository
 GITURL_SRC?=git://git.dragonflybsd.org/dragonfly.git
+# DragonFly BSD projects repository
+GITURL_PROJECTS?=git://git.dragonflybsd.org/projects.git
 # Branch to be fetched & checked out
 # * master - latest development branch
 # * DragonFly_RELEASE_x_y - stable release branch x.y
 BRANCH?=master
+BRANCH_PROJECTS?=master
 
 # DPorts source repository
 GITURL_DPORTS?=git://mirror-master.dragonflybsd.org/dports.git
@@ -51,15 +54,18 @@ help all:
 	@printf ${LPATT} "src-create"         "fetch initial src repository from the net"
 	@printf ${LPATT} "src-create-shallow" "fetch initial history-free src repository"
 .endif
+.if exists(${.CURDIR}/projects/.git)
+	@printf ${LPATT} "projects-update"         "update your projects repository from the net"
+.else
+	@printf ${LPATT} "projects-create"         "fetch initial projects repository from the net"
+	@printf ${LPATT} "projects-create-shallow" "fetch initial history-free projects repository"
+.endif
 	@echo
 .if exists(${.CURDIR}/src-sys.tar.bz2)
 	@printf ${LPATT} "release-sys-extract" "extract the pre-packaged sys-only sources"
 	@echo
 .endif
 	@echo "src checkout branch: ${BRANCH}"
-	@echo
-	@echo "If automating please feel free to run 'git pull' from cron."
-	@echo "We prefer once a day but you can run them more often if you desire."
 
 git-check:
 	@/usr/bin/which -s git || \
@@ -68,6 +74,10 @@ git-check:
 src-check: git-check
 	@/bin/test ! -d ${.CURDIR}/src/.git || \
 		(echo "Error: ${.CURDIR}/src already exists"; /usr/bin/false)
+
+projects-check: git-check
+	@/bin/test ! -d ${.CURDIR}/projects/.git || \
+		(echo "Error: ${.CURDIR}/projects already exists"; /usr/bin/false)
 
 src-check-hasdir: git-check
 	@/bin/test -d ${.CURDIR}/src/.git || \
@@ -83,8 +93,25 @@ src-create-shallow: src-check
 	@echo
 	git clone --depth 1 --branch ${BRANCH} -- ${GITURL_SRC} ${.CURDIR}/src
 
+projects-create: projects-check
+	@echo "If problems occur you may have to 'rm -rf projects' and try again."
+	@echo
+	git clone --branch ${BRANCH_PROJECTS} -- ${GITURL_PROJECTS} ${.CURDIR}/projects
+
+projects-create-shallow: projects-check
+	@echo "If problems occur you may have to 'rm -rf projects' and try again."
+	@echo
+	git clone --depth 1 --branch ${BRANCH_PROJECTS} -- ${GITURL_PROJECTS} ${.CURDIR}/projects
+
 src-update: src-check-hasdir
-	cd ${.CURDIR}/src && git pull
+	cd ${.CURDIR}/src && git pull --ff-only
+	@echo
+	@echo "To automate, feel free to run this task from cron(8)."
+
+projects-update: projects-check-hasdir
+	cd ${.CURDIR}/projects && git pull --ff-only
+	@echo
+	@echo "To automate, feel free to run this task from cron(8)."
 
 .if exists(${.CURDIR}/src-sys.tar.bz2)
 release-sys-extract:
@@ -126,7 +153,9 @@ dports-create-shallow: dports-check
 .endif
 
 dports-update: dports-check-hasdir
-	cd ${.CURDIR}/dports && git pull
+	cd ${.CURDIR}/dports && git pull --ff-only
+	@echo
+	@echo "To automate, feel free to run this task from cron(8)."
 
 dports-download: dports-download-check
 	rm -f ${DPTBALL}
@@ -178,7 +207,7 @@ pkg-bootstrap-install:
 .else
 	${.CURDIR}/local/sbin/pkg-static install -y ${PKG_FLAGS} pkg
 .endif
-	${.CURDIR}/local/sbin/pkg install -y ${PKG_FLAGS} ca_root_nss
+	${.CURDIR}/local/sbin/pkg-static install -y ${PKG_FLAGS} ca_root_nss
 	cp -f ${.CURDIR}/local/etc/pkg/repos/df-latest.conf.sample \
 		${.CURDIR}/local/etc/pkg/repos/df-latest.conf \
 

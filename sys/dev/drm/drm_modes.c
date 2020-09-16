@@ -35,6 +35,7 @@
 #include <linux/export.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
+#include <video/of_videomode.h>
 #include <video/videomode.h>
 #include <drm/drm_modes.h>
 
@@ -48,13 +49,7 @@
  */
 void drm_mode_debug_printmodeline(const struct drm_display_mode *mode)
 {
-	DRM_DEBUG_KMS("Modeline %d:\"%s\" %d %d %d %d %d %d %d %d %d %d "
-			"0x%x 0x%x\n",
-		mode->base.id, mode->name, mode->vrefresh, mode->clock,
-		mode->hdisplay, mode->hsync_start,
-		mode->hsync_end, mode->htotal,
-		mode->vdisplay, mode->vsync_start,
-		mode->vsync_end, mode->vtotal, mode->type, mode->flags);
+	DRM_DEBUG_KMS("Modeline " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
 }
 EXPORT_SYMBOL(drm_mode_debug_printmodeline);
 
@@ -76,7 +71,7 @@ struct drm_display_mode *drm_mode_create(struct drm_device *dev)
 	if (!nmode)
 		return NULL;
 
-	if (drm_mode_object_get(dev, &nmode->base, DRM_MODE_OBJECT_MODE)) {
+	if (drm_mode_object_add(dev, &nmode->base, DRM_MODE_OBJECT_MODE)) {
 		kfree(nmode);
 		return NULL;
 	}
@@ -164,6 +159,7 @@ struct drm_display_mode *drm_cvt_mode(struct drm_device *dev, int hdisplay,
 	unsigned int vfieldrate, hperiod;
 	int hdisplay_rnd, hmargin, vdisplay_rnd, vmargin, vsync;
 	int interlace;
+	u64 tmp;
 
 	/* allocate the drm_display_mode structure. If failure, we will
 	 * return directly
@@ -321,8 +317,11 @@ struct drm_display_mode *drm_cvt_mode(struct drm_device *dev, int hdisplay,
 		drm_mode->vsync_end = drm_mode->vsync_start + vsync;
 	}
 	/* 15/13. Find pixel clock frequency (kHz for xf86) */
-	drm_mode->clock = drm_mode->htotal * HV_FACTOR * 1000 / hperiod;
-	drm_mode->clock -= drm_mode->clock % CVT_CLOCK_STEP;
+	tmp = drm_mode->htotal; /* perform intermediate calcs in u64 */
+	tmp *= HV_FACTOR * 1000;
+	do_div(tmp, hperiod);
+	tmp -= drm_mode->clock % CVT_CLOCK_STEP;
+	drm_mode->clock = tmp;
 	/* 18/16. Find actual vertical frame frequency */
 	/* ignore - just set the mode flag for interlaced */
 	if (interlaced) {
@@ -728,7 +727,7 @@ void drm_mode_set_name(struct drm_display_mode *mode)
 {
 	bool interlaced = !!(mode->flags & DRM_MODE_FLAG_INTERLACE);
 
-	ksnprintf(mode->name, DRM_DISPLAY_MODE_LEN, "%dx%d%s",
+	snprintf(mode->name, DRM_DISPLAY_MODE_LEN, "%dx%d%s",
 		 mode->hdisplay, mode->vdisplay,
 		 interlaced ? "i" : "");
 }
@@ -793,6 +792,26 @@ int drm_mode_vrefresh(const struct drm_display_mode *mode)
 	return refresh;
 }
 EXPORT_SYMBOL(drm_mode_vrefresh);
+
+/**
+ * drm_mode_get_hv_timing - Fetches hdisplay/vdisplay for given mode
+ * @mode: mode to query
+ * @hdisplay: hdisplay value to fill in
+ * @vdisplay: vdisplay value to fill in
+ *
+ * The vdisplay value will be doubled if the specified mode is a stereo mode of
+ * the appropriate layout.
+ */
+void drm_mode_get_hv_timing(const struct drm_display_mode *mode,
+			    int *hdisplay, int *vdisplay)
+{
+	struct drm_display_mode adjusted = *mode;
+
+	drm_mode_set_crtcinfo(&adjusted, CRTC_STEREO_DOUBLE_ONLY);
+	*hdisplay = adjusted.crtc_hdisplay;
+	*vdisplay = adjusted.crtc_vdisplay;
+}
+EXPORT_SYMBOL(drm_mode_get_hv_timing);
 
 /**
  * drm_mode_set_crtcinfo - set CRTC modesetting timing parameters
@@ -1458,6 +1477,9 @@ drm_mode_create_from_cmdline_mode(struct drm_device *dev,
 		return NULL;
 
 	mode->type |= DRM_MODE_TYPE_USERDEF;
+	/* fix up 1368x768: GFT/CVT can't express 1366 width due to alignment */
+	if (cmd->xres == 1366)
+		drm_mode_fixup_1366x768(mode);
 	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
 	return mode;
 }

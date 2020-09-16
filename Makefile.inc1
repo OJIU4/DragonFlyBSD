@@ -169,8 +169,7 @@ WORLDDEST=	${DESTDIRBASE}/world_${TARGET_ARCH}
 
 # The bootstrap-tools path is used by the bootstrap-tools, build-tools, and
 # cross-tools stages to augment the existing command path to access newer
-# versions of certain utilities such as 'patch' that the cross-tools stage
-# might expect.
+# versions of certain utilities that the cross-tools stage might expect.
 #
 BTOOLSPATH= ${BTOOLSDEST}/usr/sbin:${BTOOLSDEST}/usr/bin:${BTOOLSDEST}/sbin:${BTOOLSDEST}/bin
 
@@ -461,7 +460,7 @@ realquickworld: _qwinit _mtreetmp _obj _includes _libraries everything _qwdone
 
 crossworld: _worldtmp _bootstrap-tools _obj _build-tools _cross-tools
 
-GENLOGDIR=	/usr/obj/${.CURDIR}
+GENLOGDIR=	/usr/obj${.CURDIR}
 .ORDER: build-all install-all
 
 # build-all
@@ -885,10 +884,7 @@ installkernel reinstallkernel:
 # and build tools stages have access to earlier binaries they themselves
 # had generated.
 #
-# patch:	older patch's do not have -i.  This program must be built
-#		first so other bootstrap tools that need to apply patches
-#		can use it.
-# [x]install:	dependancies on various new install features
+# [x]install:	dependencies on various new install features
 # rpcgen:	old rpcgen used a hardwired cpp path, newer OBJFORMAT_PATH
 #		envs are not compatible with older objformat binaries.
 #
@@ -899,7 +895,6 @@ installkernel reinstallkernel:
 # m4's parser file needs the latest byacc (insanity!).
 #
 BSTRAPDIRS1= \
-	usr.bin/patch \
 	bin/chmod bin/cp bin/cpdup bin/dd bin/mkdir bin/rm bin/echo \
 	bin/test bin/cat bin/ln bin/mv bin/expr bin/sh \
 	bin/hostname bin/kill \
@@ -919,7 +914,7 @@ BSTRAPDIRS2= \
 	usr.bin/cmp usr.bin/xargs usr.bin/env usr.bin/dirname \
 	usr.bin/tail usr.bin/unifdef \
 	usr.sbin/chown usr.sbin/mtree usr.sbin/config \
-	usr.sbin/zic usr.sbin/pwd_mkdb \
+	usr.sbin/tzsetup usr.sbin/zic usr.sbin/pwd_mkdb \
 	gnu/usr.bin/grep usr.bin/sort usr.bin/gzip \
 	usr.bin/mkcsmapper usr.bin/mkesdb usr.bin/crunch
 
@@ -1086,6 +1081,9 @@ _generic_libs+=	lib
 
 _prebuild_libs+=	lib/librecrypto lib/libressl
 lib/libressl__L: lib/librecrypto__L
+
+_prebuild_libs+=       lib/libldns
+lib/libldns__L: lib/librecrypto__L
 
 _prebuild_libs+= lib/libsbuf lib/libm \
 		lib/libpam/libpam lib/libypclnt lib/lib${THREAD_LIB} \

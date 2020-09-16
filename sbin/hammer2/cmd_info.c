@@ -251,9 +251,6 @@ mount_callback2(const char *pfsname,
 	}
 }
 
-/*
- * Support
- */
 static
 void
 h2disk_check(const char *devpath,
@@ -342,16 +339,16 @@ h2pfs_check(int fd, hammer2_blockref_t *bref,
 	bytes = (size_t)1 << (bref->data_off & HAMMER2_OFF_MASK_RADIX);
 
 	io_off = bref->data_off & ~HAMMER2_OFF_MASK_RADIX;
-	io_base = io_off & ~(hammer2_off_t)(HAMMER2_MINIOSIZE - 1);
+	io_base = io_off & ~(hammer2_off_t)(HAMMER2_LBUFSIZE - 1);
 	io_bytes = bytes;
 	boff = io_off - io_base;
 
-	io_bytes = HAMMER2_MINIOSIZE;
+	io_bytes = HAMMER2_LBUFSIZE;
 	while (io_bytes + boff < bytes)
 		io_bytes <<= 1;
 
 	if (io_bytes > sizeof(media)) {
-		printf("(bad block size %zd)\n", bytes);
+		printf("(bad block size %zu)\n", bytes);
 		return;
 	}
 	if (bref->type != HAMMER2_BREF_TYPE_DATA) {
@@ -412,8 +409,6 @@ h2pfs_check(int fd, hammer2_blockref_t *bref,
 	}
 
 	switch(bref->type) {
-	case HAMMER2_BREF_TYPE_EMPTY:
-		break;
 	case HAMMER2_BREF_TYPE_INODE:
 		if (media.ipdata.meta.pfs_type == HAMMER2_PFSTYPE_SUPROOT) {
 			if ((media.ipdata.meta.op_flags &
@@ -421,8 +416,7 @@ h2pfs_check(int fd, hammer2_blockref_t *bref,
 				bscan = &media.ipdata.u.blockset.blockref[0];
 				bcount = HAMMER2_SET_COUNT;
 			}
-		} else
-		if (media.ipdata.meta.op_flags & HAMMER2_OPFLAG_PFSROOT) {
+		} else if (media.ipdata.meta.op_flags & HAMMER2_OPFLAG_PFSROOT) {
 			callback2((char*)media.ipdata.filename, bref, fd);
 			bscan = NULL;
 			bcount = 0;
@@ -434,8 +428,6 @@ h2pfs_check(int fd, hammer2_blockref_t *bref,
 	case HAMMER2_BREF_TYPE_INDIRECT:
 		bscan = &media.npdata[0];
 		bcount = bytes / sizeof(hammer2_blockref_t);
-		break;
-	case HAMMER2_BREF_TYPE_DATA:
 		break;
 	case HAMMER2_BREF_TYPE_VOLUME:
 		bscan = &media.voldata.sroot_blockset.blockref[0];

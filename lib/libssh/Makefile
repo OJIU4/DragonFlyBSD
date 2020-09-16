@@ -4,15 +4,16 @@ PRIVATELIB= shpub
 
 .PATH: ${.CURDIR}/../../crypto/openssh
 SRCS=	addrmatch.c atomicio.c authfd.c authfile.c bitmap.c canohost.c \
-	chacha.c channels.c cipher.c cipher-chachapoly.c cleanup.c compat.c \
+	chacha.c channels.c cipher.c cipher-chachapoly-libcrypto.c cleanup.c compat.c \
 	dh.c digest-openssl.c dispatch.c dns.c entropy.c fatal.c \
 	hash.c hmac.c hostfile.c \
 	krl.c log.c mac.c match.c misc.c moduli.c monitor_fdpass.c msg.c \
 	nchan.c packet.c platform-misc.c poly1305.c readpass.c \
-	ssh_api.c ssh-dss.c ssh-ecdsa.c ssh-ed25519.c ssh-rsa.c \
-	sshbuf.c sshbuf-getput-basic.c sshbuf-getput-crypto.c sshbuf-misc.c \
-	ssherr.c sshkey.c ttymodes.c \
-	umac.c umac128.c utf8.c uuencode.c verify.c xmalloc.c
+	ssh_api.c ssh-dss.c ssh-ecdsa.c ssh-ecdsa-sk.c ssh-ed25519.c ssh-ed25519-sk.c \
+	ssh-rsa.c ssh-sk-client.c sshbuf.c sshbuf-getput-basic.c sshbuf-getput-crypto.c \
+	sshbuf-io.c sshbuf-misc.c \
+	ssherr.c sshkey.c sshsig.c ttymodes.c \
+	umac.c umac128.c utf8.c verify.c xmalloc.c
 SRCS+=	ed25519.c fe25519.c ge25519.c sc25519.c smult_curve25519_ref.c
 SRCS+=	kex.c kexc25519.c kexdh.c kexecdh.c \
 	kexgen.c kexgex.c kexgexc.c kexgexs.c \
@@ -29,10 +30,7 @@ SRCS+=	kex.c kexc25519.c kexdh.c kexecdh.c \
 # Portability layer
 .PATH: ${.CURDIR}/openbsd-compat
 SRCS+=	bcrypt_pbkdf.c blowfish.c bsd-misc.c bsd-signal.c fmt_scaled.c \
-	glob.c openssl-compat.c port-net.c realpath.c xcrypt.c
-SRCS+=	getrrsetbyname.c
-# XXX needs to link libldns, use simple version for now
-#SRCS+=	getrrsetbyname-ldns.c
+	getrrsetbyname-ldns.c glob.c openssl-compat.c port-net.c xcrypt.c
 
 # not needed compat:
 # arc4random.c base64.c basename.c bindresvport.c bsd-asprintf.c
@@ -55,11 +53,9 @@ NO_STRICT_ALIASING=
 
 CFLAGS+=	-I${.CURDIR} -I${.CURDIR}/../../crypto/openssh
 CFLAGS+=	-I${.CURDIR}/../../crypto/libressl/include
-# XXX investigate why
-.if 0
-DPADD=		${LIBCRYPTO} ${LIBUTIL} ${LIBZ}
-LDADD=		-lprivate_crypto -lutil -lz
+CFLAGS+=	-I${.CURDIR}/../../contrib/ldns
+DPADD=		${LIBCRYPTO} ${LIBLDNS} ${LIBUTIL} ${LIBZ}
+LDADD=		-lprivate_crypto -lprivate_ldns -lutil -lz
 LDFLAGS+=	-rpath /usr/lib/priv ${PRIVATELIB_LDFLAGS}
-.endif
 
 .include <bsd.lib.mk>

@@ -34,6 +34,9 @@
  * low-power state and comes back to normal.
  */
 
+#define I915_CSR_GLK "i915/glk_dmc_ver1_04.bin"
+#define GLK_CSR_VERSION_REQUIRED	CSR_VERSION(1, 4)
+
 #define I915_CSR_KBL "i915/kbl_dmc_ver1_01.bin"
 MODULE_FIRMWARE(I915_CSR_KBL);
 #define KBL_CSR_VERSION_REQUIRED	CSR_VERSION(1, 1)
@@ -46,7 +49,7 @@ MODULE_FIRMWARE(I915_CSR_SKL);
 MODULE_FIRMWARE(I915_CSR_BXT);
 #define BXT_CSR_VERSION_REQUIRED	CSR_VERSION(1, 7)
 
-#define FIRMWARE_URL  "https://01.org/linuxgraphics/intel-linux-graphics-firmwares"
+#define FIRMWARE_URL  "https://01.org/linuxgraphics/downloads/firmware"
 
 
 
@@ -168,12 +171,6 @@ struct stepping_info {
 	char substepping;
 };
 
-static const struct stepping_info kbl_stepping_info[] = {
-	{'A', '0'}, {'B', '0'}, {'C', '0'},
-	{'D', '0'}, {'E', '0'}, {'F', '0'},
-	{'G', '0'}, {'H', '0'}, {'I', '0'},
-};
-
 static const struct stepping_info skl_stepping_info[] = {
 	{'A', '0'}, {'B', '0'}, {'C', '0'},
 	{'D', '0'}, {'E', '0'}, {'F', '0'},
@@ -194,10 +191,7 @@ intel_get_stepping_info(struct drm_i915_private *dev_priv)
 	const struct stepping_info *si;
 	unsigned int size;
 
-	if (IS_KABYLAKE(dev_priv)) {
-		size = ARRAY_SIZE(kbl_stepping_info);
-		si = kbl_stepping_info;
-	} else if (IS_SKYLAKE(dev_priv)) {
+	if (IS_SKYLAKE(dev_priv)) {
 		size = ARRAY_SIZE(skl_stepping_info);
 		si = skl_stepping_info;
 	} else if (IS_BROXTON(dev_priv)) {
@@ -271,9 +265,9 @@ void intel_csr_load_program(struct drm_i915_private *dev_priv)
 static uint32_t *parse_csr_fw(struct drm_i915_private *dev_priv,
 			      const struct firmware *fw)
 {
-	const struct intel_css_header *css_header;
-	const struct intel_package_header *package_header;
-	const struct intel_dmc_header *dmc_header;
+	struct intel_css_header *css_header;
+	struct intel_package_header *package_header;
+	struct intel_dmc_header *dmc_header;
 	struct intel_csr *csr = &dev_priv->csr;
 	const struct stepping_info *si = intel_get_stepping_info(dev_priv);
 	uint32_t dmc_offset = CSR_DEFAULT_FW_OFFSET, readcount = 0, nbytes;
@@ -285,7 +279,7 @@ static uint32_t *parse_csr_fw(struct drm_i915_private *dev_priv,
 		return NULL;
 
 	/* Extract CSS Header information*/
-	css_header = (const struct intel_css_header *)fw->data;
+	css_header = (struct intel_css_header *)fw->data;
 	if (sizeof(struct intel_css_header) !=
 	    (css_header->header_len * 4)) {
 		DRM_ERROR("Firmware has wrong CSS header length %u bytes\n",
@@ -295,7 +289,9 @@ static uint32_t *parse_csr_fw(struct drm_i915_private *dev_priv,
 
 	csr->version = css_header->version;
 
-	if (IS_KABYLAKE(dev_priv)) {
+	if (IS_GEMINILAKE(dev_priv)) {
+		required_version = GLK_CSR_VERSION_REQUIRED;
+	} else if (IS_KABYLAKE(dev_priv)) {
 		required_version = KBL_CSR_VERSION_REQUIRED;
 	} else if (IS_SKYLAKE(dev_priv)) {
 		required_version = SKL_CSR_VERSION_REQUIRED;
@@ -319,7 +315,7 @@ static uint32_t *parse_csr_fw(struct drm_i915_private *dev_priv,
 	readcount += sizeof(struct intel_css_header);
 
 	/* Extract Package Header information*/
-	package_header = (const struct intel_package_header *)
+	package_header = (struct intel_package_header *)
 		&fw->data[readcount];
 	if (sizeof(struct intel_package_header) !=
 	    (package_header->header_len * 4)) {
@@ -351,7 +347,7 @@ static uint32_t *parse_csr_fw(struct drm_i915_private *dev_priv,
 	readcount += dmc_offset;
 
 	/* Extract dmc_header information. */
-	dmc_header = (const struct intel_dmc_header *)&fw->data[readcount];
+	dmc_header = (struct intel_dmc_header *)&fw->data[readcount];
 	if (sizeof(struct intel_dmc_header) != (dmc_header->header_len)) {
 		DRM_ERROR("Firmware has wrong dmc header length %u bytes\n",
 			  (dmc_header->header_len));
@@ -385,7 +381,7 @@ static uint32_t *parse_csr_fw(struct drm_i915_private *dev_priv,
 	}
 	csr->dmc_fw_size = dmc_header->fw_size;
 
-	dmc_payload = kmalloc(nbytes, M_DRM, M_WAITOK);
+	dmc_payload = kmalloc(nbytes, M_DRM, GFP_KERNEL);
 	if (!dmc_payload) {
 		DRM_ERROR("Memory allocation failed for dmc payload\n");
 		return NULL;
@@ -398,14 +394,12 @@ static void csr_load_work_fn(struct work_struct *work)
 {
 	struct drm_i915_private *dev_priv;
 	struct intel_csr *csr;
-	const struct firmware *fw;
-	int ret;
+	const struct firmware *fw = NULL;
 
 	dev_priv = container_of(work, typeof(*dev_priv), csr.work);
 	csr = &dev_priv->csr;
 
-	ret = request_firmware(&fw, dev_priv->csr.fw_path,
-			       &dev_priv->drm.pdev->dev);
+	request_firmware(&fw, dev_priv->csr.fw_path, &dev_priv->drm.pdev->dev);
 	if (fw)
 		dev_priv->csr.dmc_payload = parse_csr_fw(dev_priv, fw);
 
@@ -414,12 +408,12 @@ static void csr_load_work_fn(struct work_struct *work)
 
 		intel_display_power_put(dev_priv, POWER_DOMAIN_INIT);
 
-		DRM_INFO("Finished loading %s (v%u.%u)\n",
+		DRM_INFO("Finished loading DMC firmware %s (v%u.%u)\n",
 			 dev_priv->csr.fw_path,
 			 CSR_VERSION_MAJOR(csr->version),
 			 CSR_VERSION_MINOR(csr->version));
 	} else {
-		DRM_ERROR(
+		dev_notice(dev_priv->drm.dev,
 			   "Failed to load DMC firmware"
 			   " [" FIRMWARE_URL "],"
 			   " disabling runtime power management.\n");
@@ -444,7 +438,9 @@ void intel_csr_ucode_init(struct drm_i915_private *dev_priv)
 	if (!HAS_CSR(dev_priv))
 		return;
 
-	if (IS_KABYLAKE(dev_priv))
+	if (IS_GEMINILAKE(dev_priv))
+		csr->fw_path = I915_CSR_GLK;
+	else if (IS_KABYLAKE(dev_priv))
 		csr->fw_path = I915_CSR_KBL;
 	else if (IS_SKYLAKE(dev_priv))
 		csr->fw_path = I915_CSR_SKL;

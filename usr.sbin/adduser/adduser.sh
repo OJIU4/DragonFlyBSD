@@ -488,6 +488,7 @@ get_uid() {
 	_prompt=
 
 	if [ -n "$uuid" ]; then
+		uuid=`get_nextuid $uuid`
 		_prompt="Uid [$uuid]: "
 	else
 		_prompt="Uid (Leave empty for default): "
@@ -730,10 +731,10 @@ input_interactive() {
 					trap 'stty echo; exit' 0 1 2 3 15
 					stty -echo
 					echo -n "Enter password: "
-					read -r upass
+					IFS= read -r upass
 					echo''
 					echo -n "Enter password again: "
-					read -r _passconfirm
+					IFS= read -r _passconfirm
 					echo ''
 					stty echo
 					# if user entered a blank password
@@ -783,7 +784,7 @@ input_interactive() {
 		esac
 		break
 	done
-	
+
 	# Display the information we have so far and prompt to
 	# commit it.
 	#
@@ -912,7 +913,7 @@ if [ -n "$readconfig" ]; then
 	if ( . ${ADDUSERCONF} > /dev/null 2>&1 ); then
 		[ -r ${ADDUSERCONF} ] && . ${ADDUSERCONF} > /dev/null 2>&1
 	fi
-fi 
+fi
 
 # Process command-line options
 #

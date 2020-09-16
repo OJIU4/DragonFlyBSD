@@ -27,6 +27,8 @@
 #ifndef _LINUX_IDR_H_
 #define _LINUX_IDR_H_
 
+#include <linux/slab.h>
+
 #include <sys/idr.h>
 
 #ifdef MALLOC_DECLARE

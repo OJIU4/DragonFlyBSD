@@ -414,6 +414,32 @@ ifscript_down()
 	return 1
 }
 
+# wlan_get_unused
+# walk through net.wlan and find unused device that can be created
+#
+wlan_get_unused()
+{
+	local idx
+
+	idx=0
+
+	while : ; do
+		if ! ${SYSCTL_N} -q net.wlan.${idx}.%parent >/dev/null; then
+			echo "wlan${idx}"
+			break
+		fi
+		idx=$((${idx} + 1))
+	done
+}
+
+# wlan_is_parent
+# check if given interface is parent for any existing wlan device
+#
+wlan_is_parent()
+{
+	sysctl -q net.wlan | grep -q "%parent: ${1}"
+}
+
 # wlan_up
 #	Create IEEE 802.11 interfaces.
 #
@@ -423,9 +449,38 @@ wlan_up()
 	_prefix=
 	_list=
 
-	for parent in `${SYSCTL_N} -q net.wlan.devices`; do
+	local _rcconf _auto
+	_rcconf=""
+	_auto=""
+
+	local wlan_devices
+	if [ -n "$1" ]; then
+		wlan_devices="$1"
+	else
+		wlan_devices="`${SYSCTL_N} -q net.wlan.devices`"
+	fi
+
+	# Order detected devices so that interfaces configured via rc.conf are
+	# created first, and then all other devices are automatically assigned
+	for parent in ${wlan_devices}; do
+		child_wlans=`get_if_var $parent wlans_IF`
+		if [ -n "${child_wlans}" ]; then
+			_rcconf="${_rcconf} ${parent}"
+		else
+			_auto="${_auto} ${parent}"
+		fi
+	done
+
+	for parent in ${_rcconf} ${_auto}; do
+		if wlan_is_parent $parent; then
+			continue
+		fi
 		# Parse wlans_$parent="$child ..."
 		child_wlans=`get_if_var $parent wlans_IF`
+		# Or find first unused wlan device to create
+		if [ -z "${child_wlans}" ]; then
+			child_wlans=`wlan_get_unused`
+		fi
 		for child in ${child_wlans}; do
 			if ifexists $child; then
 				continue
@@ -463,7 +518,14 @@ wlan_down()
 	_prefix=
 	_list=
 
-	for parent in `${SYSCTL_N} -q net.wlan.devices`; do
+	local wlan_devices
+	if [ -n "$1" ]; then
+		wlan_devices="$1"
+	else
+		wlan_devices="`${SYSCTL_N} -q net.wlan.devices`"
+	fi
+
+	for parent in ${wlan_devices}; do
 		child_wlans=`get_if_var $parent wlans_IF`
 		for child in ${child_wlans}; do
 			if ! ifexists $child; then
@@ -639,6 +701,24 @@ hexprint()
 	echo ${str}
 }
 
+is_wired_interface()
+{
+	local media
+
+	case `ifconfig $1 2>/dev/null` in
+		*media:?Ethernet*) media=Ethernet ;;
+	esac
+
+	test "$media" = "Ethernet"
+}
+
+is_ndis_interface()
+{
+	case `sysctl -n net.wlan.${1#wlan}.%parent 2>/dev/null` in
+		ndis*) true ;;
+		*) false ;;
+	esac
+}
 
 #
 # IPv6-specific setup subroutines

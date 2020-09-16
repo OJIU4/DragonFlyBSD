@@ -34,7 +34,6 @@
 #include <sys/socket.h>
 #include <net/if.h>
 #include <net/if_var.h>		/* for struct ifaddr */
-#include <net/route.h>		/* for RTX_IFA */
 #include <netinet/in.h>
 #include <netinet/in_var.h>
 #include <netinet6/nd6.h>	/* Define ND6_INFINITE_LIFETIME */
@@ -42,12 +41,12 @@
 #include <netdb.h>
 
 #include <err.h>
+#include <ifaddrs.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <time.h>
-#include <ifaddrs.h>
+#include <unistd.h>
 
 #include "ifconfig.h"
 
@@ -66,7 +65,7 @@ static	int prefix(void *, int);
 static	char *sec2str(time_t);
 static	int explicit_prefix = 0;
 
-static	char addr_buf[MAXHOSTNAMELEN *2 + 1];	/*for getnameinfo()*/
+static 	char addr_buf[NI_MAXHOST];  /* for getnameinfo() */
 
 static void
 setifprefixlen(const char *addr, int dummy __unused, int s,
@@ -174,7 +173,7 @@ in6_fillscopeid(struct sockaddr_in6 *sin6)
 }
 
 static void
-in6_status(int s __unused, const struct rt_addrinfo * info)
+in6_status(int s __unused, const struct ifaddrs *ifa)
 {
 	struct sockaddr_in6 *sin, null_sin;
 	struct in6_ifreq ifr6;
@@ -182,6 +181,7 @@ in6_status(int s __unused, const struct rt_addrinfo * info)
 	u_int32_t flags6;
 	struct in6_addrlifetime lifetime;
 	struct timespec now;
+	int n_flags, prefixlen;
 	int error;
 	u_int32_t scopeid;
 
@@ -189,7 +189,7 @@ in6_status(int s __unused, const struct rt_addrinfo * info)
 
 	memset(&null_sin, 0, sizeof(null_sin));
 
-	sin = (struct sockaddr_in6 *)info->rti_info[RTAX_IFA];
+	sin = (struct sockaddr_in6 *)ifa->ifa_addr;
 	if (sin == NULL)
 		return;
 
@@ -227,21 +227,27 @@ in6_status(int s __unused, const struct rt_addrinfo * info)
 	}
 	scopeid = sin->sin6_scope_id;
 
+	if (f_addr != NULL && strcmp(f_addr, "fqdn") == 0)
+		n_flags = 0;
+	else if (f_addr != NULL && strcmp(f_addr, "host") == 0)
+		n_flags = NI_NOFQDN;
+	else
+		n_flags = NI_NUMERICHOST;
+
 	error = getnameinfo((struct sockaddr *)sin, sin->sin6_len, addr_buf,
-			    sizeof(addr_buf), NULL, 0, NI_NUMERICHOST);
+			    sizeof(addr_buf), NULL, 0, n_flags);
 	if (error != 0)
 		inet_ntop(AF_INET6, &sin->sin6_addr, addr_buf,
 			  sizeof(addr_buf));
-	printf("\tinet6 %s ", addr_buf);
+	printf("\tinet6 %s", addr_buf);
 
-	if (flags & IFF_POINTOPOINT) {
-		/* note RTAX_BRD overlap with IFF_BROADCAST */
-		sin = (struct sockaddr_in6 *)info->rti_info[RTAX_BRD];
+	if (ifa->ifa_flags & IFF_POINTOPOINT) {
+		sin = (struct sockaddr_in6 *)ifa->ifa_dstaddr;
 		/*
 		 * some of the interfaces do not have valid destination
 		 * address.
 		 */
-		if (sin && sin->sin6_family == AF_INET6) {
+		if (sin != NULL && sin->sin6_family == AF_INET6) {
 			int error;
 
 			/* XXX: embedded link local addr check */
@@ -262,48 +268,53 @@ in6_status(int s __unused, const struct rt_addrinfo * info)
 			if (error != 0)
 				inet_ntop(AF_INET6, &sin->sin6_addr, addr_buf,
 					  sizeof(addr_buf));
-			printf("--> %s ", addr_buf);
+			printf(" --> %s", addr_buf);
 		}
 	}
 
-	sin = (struct sockaddr_in6 *)info->rti_info[RTAX_NETMASK];
-	if (!sin)
+	sin = (struct sockaddr_in6 *)ifa->ifa_netmask;
+	if (sin == NULL)
 		sin = &null_sin;
-	printf("prefixlen %d ", prefix(&sin->sin6_addr,
-		sizeof(struct in6_addr)));
+	prefixlen = prefix(&sin->sin6_addr, sizeof(struct in6_addr));
+	if (f_inet6 != NULL && strcmp(f_inet6, "cidr") == 0)
+		printf("/%d", prefixlen);
+	else
+		printf(" prefixlen %d", prefixlen);
 
 	if ((flags6 & IN6_IFF_ANYCAST) != 0)
-		printf("anycast ");
+		printf(" anycast");
 	if ((flags6 & IN6_IFF_TENTATIVE) != 0)
-		printf("tentative ");
+		printf(" tentative");
 	if ((flags6 & IN6_IFF_DUPLICATED) != 0)
-		printf("duplicated ");
+		printf(" duplicated");
 	if ((flags6 & IN6_IFF_DETACHED) != 0)
-		printf("detached ");
+		printf(" detached");
 	if ((flags6 & IN6_IFF_DEPRECATED) != 0)
-		printf("deprecated ");
+		printf(" deprecated");
 	if ((flags6 & IN6_IFF_AUTOCONF) != 0)
-		printf("autoconf ");
+		printf(" autoconf");
 	if ((flags6 & IN6_IFF_TEMPORARY) != 0)
-		printf("temporary ");
+		printf(" temporary");
 
         if (scopeid)
-		printf("scopeid 0x%x ", scopeid);
+		printf(" scopeid 0x%x", scopeid);
 
 	if (ip6lifetime && (lifetime.ia6t_preferred || lifetime.ia6t_expire)) {
-		printf("pltime ");
+		printf(" pltime");
 		if (lifetime.ia6t_preferred) {
-			printf("%s ", lifetime.ia6t_preferred < now.tv_sec
+			printf(" %s", lifetime.ia6t_preferred < now.tv_sec
 				? "0" : sec2str(lifetime.ia6t_preferred - now.tv_sec));
-		} else
-			printf("infty ");
+		} else {
+			printf(" infty");
+		}
 
-		printf("vltime ");
+		printf(" vltime");
 		if (lifetime.ia6t_expire) {
-			printf("%s ", lifetime.ia6t_expire < now.tv_sec
+			printf(" %s", lifetime.ia6t_expire < now.tv_sec
 				? "0" : sec2str(lifetime.ia6t_expire - now.tv_sec));
-		} else
-			printf("infty ");
+		} else {
+			printf(" infty");
+		}
 	}
 
 	putchar('\n');

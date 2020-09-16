@@ -31,6 +31,8 @@ MAN=	aac.4 \
 	amdpm.4 \
 	amdsbwd.4 \
 	amdsmb.4 \
+	amdsmn.4 \
+	amdtemp.4 \
 	amr.4 \
 	aperf.4 \
 	aps.4 \
@@ -402,6 +404,7 @@ MAN=	aac.4 \
 	wlan_wep.4 \
 	wlan_xauth.4 \
 	wpi.4 \
+	wsp.4 \
 	xe.4 \
 	xhci.4 \
 	xl.4 \

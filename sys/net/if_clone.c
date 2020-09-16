@@ -50,13 +50,13 @@ static bool	if_clone_match(struct if_clone *, const char *);
 static struct if_clone *if_clone_lookup(const char *);
 static int	if_clone_alloc_unit(struct if_clone *, int *);
 static void	if_clone_free_unit(struct if_clone *, int);
-static int	if_clone_createif(struct if_clone *, int, caddr_t);
+static int	if_clone_createif(struct if_clone *, int, caddr_t, caddr_t);
 
 /*
  * Lookup the cloner and create a clone network interface.
  */
 int
-if_clone_create(char *name, int len, caddr_t params)
+if_clone_create(char *name, int len, caddr_t params, caddr_t data)
 {
 	struct if_clone *ifc;
 	char ifname[IFNAMSIZ];
@@ -71,8 +71,11 @@ if_clone_create(char *name, int len, caddr_t params)
 
 	wildcard = (unit < 0);
 
-	if ((err = if_clone_alloc_unit(ifc, &unit)) != 0)
+	ifnet_lock();
+	if ((err = if_clone_alloc_unit(ifc, &unit)) != 0) {
+		ifnet_unlock();
 		return (err);
+	}
 
 	ksnprintf(ifname, IFNAMSIZ, "%s%d", ifc->ifc_name, unit);
 
@@ -80,15 +83,18 @@ if_clone_create(char *name, int len, caddr_t params)
 	 * Update the name with the allocated unit for the caller,
 	 * who must preserve enough space.
 	 */
-	if (wildcard && strlcpy(name, ifname, len) >= len)
-		return (ENOSPC);
-
-	if ((err = if_clone_createif(ifc, unit, params)) != 0) {
+	if (wildcard && strlcpy(name, ifname, len) >= len) {
 		if_clone_free_unit(ifc, unit);
-		return (err);
+		ifnet_unlock();
+		return (ENOSPC);
 	}
 
-	return (0);
+	err = if_clone_createif(ifc, unit, params, data);
+	if (err)
+		if_clone_free_unit(ifc, unit);
+	ifnet_unlock();
+
+	return (err);
 }
 
 /*
@@ -118,14 +124,14 @@ if_clone_destroy(const char *name)
 		return (EOPNOTSUPP);
 
 	ifnet_lock();
-	error = ifc->ifc_destroy(ifp);
-	ifnet_unlock();
-	if (error)
-		return (error);
-
 	if_clone_free_unit(ifc, unit);
+	error = ifc->ifc_destroy(ifp);
+	if (error)
+		if_clone_alloc_unit(ifc, &unit);
+	/* else ifc structure is dead */
+	ifnet_unlock();
 
-	return (0);
+	return (error);
 }
 
 /*
@@ -160,13 +166,16 @@ if_clone_attach(struct if_clone *ifc)
 	LIST_INSERT_HEAD(&if_cloners, ifc, ifc_list);
 	if_cloners_count++;
 
+	ifnet_lock();
 	for (unit = 0; unit < ifc->ifc_minifs; unit++) {
 		if_clone_alloc_unit(ifc, &unit);
-		if (if_clone_createif(ifc, unit, NULL) != 0) {
+		if (if_clone_createif(ifc, unit, NULL, NULL) != 0) {
+			ifnet_unlock();
 			panic("%s: failed to create required interface %s%d",
 			      __func__, ifc->ifc_name, unit);
 		}
 	}
+	ifnet_unlock();
 
 	EVENTHANDLER_INVOKE(if_clone_event, ifc);
 
@@ -299,6 +308,8 @@ if_clone_lookup(const char *name)
 /*
  * Allocate a unit number.
  *
+ * ifnet must be locked.
+ *
  * Returns 0 on success and an error on failure.
  */
 static int
@@ -330,8 +341,12 @@ if_clone_alloc_unit(struct if_clone *ifc, int *unit)
 	/*
 	 * Allocate the unit in the bitmap.
 	 */
+#if 0
 	KASSERT((ifc->ifc_units[bytoff] & (1 << bitoff)) == 0,
 		("%s: bit is already set", __func__));
+#endif
+	if (ifc->ifc_units[bytoff] & (1 << bitoff))
+		return (EEXIST);
 	ifc->ifc_units[bytoff] |= (1 << bitoff);
 
 	return (0);
@@ -339,6 +354,8 @@ if_clone_alloc_unit(struct if_clone *ifc, int *unit)
 
 /*
  * Free an allocated unit number.
+ *
+ * ifnet must be locked.
  */
 static void
 if_clone_free_unit(struct if_clone *ifc, int unit)
@@ -354,9 +371,11 @@ if_clone_free_unit(struct if_clone *ifc, int unit)
 
 /*
  * Create a clone network interface.
+ *
+ * ifnet must be locked
  */
 static int
-if_clone_createif(struct if_clone *ifc, int unit, caddr_t params)
+if_clone_createif(struct if_clone *ifc, int unit, caddr_t params, caddr_t data)
 {
 	struct ifnet *ifp;
 	char ifname[IFNAMSIZ];
@@ -364,19 +383,17 @@ if_clone_createif(struct if_clone *ifc, int unit, caddr_t params)
 
 	ksnprintf(ifname, IFNAMSIZ, "%s%d", ifc->ifc_name, unit);
 
-	ifnet_lock();
 	ifp = ifunit(ifname);
-	ifnet_unlock();
 	if (ifp != NULL)
 		return (EEXIST);
 
-	err = (*ifc->ifc_create)(ifc, unit, params);
+	/*ifnet_unlock();*/
+	err = (*ifc->ifc_create)(ifc, unit, params, data);
+	/*ifnet_lock();*/
 	if (err != 0)
 		return (err);
 
-	ifnet_lock();
 	ifp = ifunit(ifname);
-	ifnet_unlock();
 	if (ifp == NULL)
 		return (ENXIO);
 

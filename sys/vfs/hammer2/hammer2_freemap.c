@@ -259,7 +259,7 @@ hammer2_freemap_alloc(hammer2_chain_t *chain, size_t bytes)
 	 * for each type.  At a minimum we have to break-up our heuristic
 	 * by device block sizes.
 	 */
-	hindex = hammer2_devblkradix(radix) - HAMMER2_MINIORADIX;
+	hindex = hammer2_devblkradix(radix) - HAMMER2_LBUFRADIX;
 	KKASSERT(hindex < HAMMER2_FREEMAP_HEUR_NRADIX);
 	hindex += bref->type * HAMMER2_FREEMAP_HEUR_NRADIX;
 	hindex &= HAMMER2_FREEMAP_HEUR_TYPES * HAMMER2_FREEMAP_HEUR_NRADIX - 1;
@@ -1135,14 +1135,14 @@ again:
 					bmap->class = class;
 				*bitmap |= bmmask11;
 				if (hammer2_debug & 0x0040) {
-					kprintf("hammer2_freemap_recover: "
+					kprintf("hammer2_freemap_adjust: "
 						"fixup type=%02x "
 						"block=%016jx/%zd\n",
 						bref->type, data_off, bytes);
 				}
 			} else {
 				/*
-				kprintf("hammer2_freemap_recover:  good "
+				kprintf("hammer2_freemap_adjust:  good "
 					"type=%02x block=%016jx/%zd\n",
 					bref->type, data_off, bytes);
 				*/

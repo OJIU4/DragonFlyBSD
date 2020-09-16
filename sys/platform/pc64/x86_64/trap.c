@@ -66,8 +66,6 @@
 #endif
 #include <sys/ktr.h>
 #include <sys/sysmsg.h>
-#include <sys/sysproto.h>
-#include <sys/sysunion.h>
 
 #include <vm/pmap.h>
 #include <vm/vm.h>
@@ -206,17 +204,6 @@ userenter(struct thread *curtd, struct proc *curp)
 		if (ocred)
 			crfree(ocred);
 	}
-
-#ifdef DDB
-	/*
-	 * Debugging, remove top two user stack pages to catch kernel faults
-	 */
-	if (__predict_false(freeze_on_seg_fault > 1 && curtd->td_lwp)) {
-		pmap_remove(vmspace_pmap(curtd->td_lwp->lwp_vmspace),
-			    0x00007FFFFFFFD000LU,
-			    0x0000800000000000LU);
-	}
-#endif
 }
 
 /*
@@ -291,22 +278,6 @@ recheck:
 	 */
 	if (__predict_false((sig = CURSIG_LCK_TRACE(lp, &ptok)) != 0)) {
 		postsig(sig, ptok);
-		goto recheck;
-	}
-
-	/*
-	 * block here if we are swapped out, but still process signals
-	 * (such as SIGKILL).  proc0 (the swapin scheduler) is already
-	 * aware of our situation, we do not have to wake it up.
-	 */
-	if (__predict_false(p->p_flags & P_SWAPPEDOUT)) {
-		lwkt_gettoken(&p->p_token);
-		p->p_flags |= P_SWAPWAIT;
-		swapin_request();
-		if (p->p_flags & P_SWAPWAIT)
-			tsleep(p, PCATCH, "SWOUT", 0);
-		p->p_flags &= ~P_SWAPWAIT;
-		lwkt_reltoken(&p->p_token);
 		goto recheck;
 	}
 
@@ -800,8 +771,17 @@ trap(struct trapframe *frame)
 				goto out2;
 			} else if (panic_on_nmi == 0)
 				goto out2;
-			/* FALL THROUGH */
 #endif /* NISA > 0 */
+			break;
+		default:
+			if (type >= T_RESERVED && type < T_RESERVED + 256) {
+				kprintf("Ignoring spurious unknown "
+					"cpu trap T_RESERVED+%d\n",
+					type - T_RESERVED);
+				gd->gd_cnt.v_trap++;
+				goto out2;
+			}
+			break;
 		}
 		trap_fatal(frame, 0);
 		goto out2;
@@ -1041,18 +1021,20 @@ trap_fatal(struct trapframe *frame, vm_offset_t eva)
 	u_int type;
 	long rsp;
 	struct soft_segment_descriptor softseg;
-	char *msg;
 
 	code = frame->tf_err;
 	type = frame->tf_trapno;
 	sdtossd(&gdt[IDXSEL(frame->tf_cs & 0xffff)], &softseg);
 
+	kprintf("\n\nFatal trap %d: ", type);
 	if (type <= MAX_TRAP_MSG)
-		msg = trap_msg[type];
+		kprintf("%s ", trap_msg[type]);
 	else
-		msg = "UNKNOWN";
-	kprintf("\n\nFatal trap %d: %s while in %s mode\n", type, msg,
-	    ISPL(frame->tf_cs) == SEL_UPL ? "user" : "kernel");
+		kprintf("rsvd(%d) ", type - T_RESERVED);
+
+	kprintf("while in %s mode\n",
+		ISPL(frame->tf_cs) == SEL_UPL ? "user" : "kernel");
+
 	/* three separate prints in case of a trap on an unmapped page */
 	kprintf("cpuid = %d; ", mycpu->gd_cpuid);
 	if (lapic_usable)
@@ -1094,6 +1076,8 @@ trap_fatal(struct trapframe *frame, vm_offset_t eva)
 		kprintf("nested task, ");
 	if (frame->tf_rflags & PSL_RF)
 		kprintf("resume, ");
+	if (frame->tf_rflags & PSL_AC)
+		kprintf("smap_open, ");
 	kprintf("IOPL = %ld\n", (frame->tf_rflags & PSL_IOPL) >> 12);
 	kprintf("current process		= ");
 	if (curproc) {
@@ -1169,8 +1153,6 @@ dblfault_handler(struct trapframe *frame)
  * MP lock is not held on entry or return.  We are responsible for
  * obtaining the MP lock if necessary and for handling ASTs
  * (e.g. a task switch) prior to return.
- *
- * MPSAFE
  */
 void
 syscall2(struct trapframe *frame)
@@ -1186,11 +1168,10 @@ syscall2(struct trapframe *frame)
 #ifdef INVARIANTS
 	int crit_count = td->td_critcount;
 #endif
-	register_t *argp;
+	struct sysmsg sysmsg;
+	union sysunion *argp;
 	u_int code;
-	int regcnt, optimized_regcnt;
-	union sysunion args;
-	register_t *argsdst;
+	const int regcnt = 6;	/* number of args passed in registers */
 
 	mycpu->gd_cnt.v_syscall++;
 
@@ -1205,9 +1186,6 @@ syscall2(struct trapframe *frame)
 		frame->tf_rax);
 
 	userenter(td, p);	/* lazy raise our priority */
-
-	regcnt = 6;
-	optimized_regcnt = 6;
 
 	/*
 	 * Misc
@@ -1232,53 +1210,42 @@ syscall2(struct trapframe *frame)
 	/*
 	 * Get the system call parameters and account for time
 	 */
+#ifdef DIAGNOSTIC
 	KASSERT(lp->lwp_md.md_regs == frame,
 		("Frame mismatch %p %p", lp->lwp_md.md_regs, frame));
+#endif
+
 	code = (u_int)frame->tf_rax;
-
-	if (__predict_false(code == SYS_syscall || code == SYS___syscall)) {
-		code = frame->tf_rdi;
-		regcnt--;
-		argp = &frame->tf_rdi + 1;
-	} else {
-		argp = &frame->tf_rdi;
-	}
-
 	if (code >= p->p_sysent->sv_size)
-		callp = &p->p_sysent->sv_table[0];
-	else
-		callp = &p->p_sysent->sv_table[code];
+		code = SYS___nosys;
+
+	argp = (union sysunion *)&frame->tf_rdi;
+	callp = &p->p_sysent->sv_table[code];
 
 	/*
 	 * On x86_64 we get up to six arguments in registers. The rest are
 	 * on the stack. The first six members of 'struct trapframe' happen
 	 * to be the registers used to pass arguments, in exactly the right
 	 * order.
-	 */
-	argsdst = (register_t *)(&args.nosys.sysmsg + 1);
-
-	/*
-	 * Its easier to copy up to the highest number of syscall arguments
-	 * passed in registers, which is 6, than to conditionalize it.
-	 */
-	bcopy(argp, argsdst, sizeof(register_t) * optimized_regcnt);
-
-	/*
+	 *
 	 * Any arguments beyond available argument-passing registers must
 	 * be copyin()'d from the user stack.
 	 */
 	narg = callp->sy_narg;
 	if (__predict_false(narg > regcnt)) {
+		register_t *argsdst;
 		caddr_t params;
 
+		argsdst = (register_t *)&sysmsg.extargs;
+		bcopy(argp, argsdst, sizeof(register_t) * regcnt);
 		params = (caddr_t)frame->tf_rsp + sizeof(register_t);
 		error = copyin(params, &argsdst[regcnt],
 			       (narg - regcnt) * sizeof(register_t));
+		argp = (void *)argsdst;
 		if (error) {
 #ifdef KTRACE
 			if (KTRPOINTP(p, td, KTR_SYSCALL)) {
-				ktrsyscall(lp, code, narg,
-					(void *)(&args.nosys.sysmsg + 1));
+				ktrsyscall(lp, code, narg, argp);
 			}
 #endif
 			goto bad;
@@ -1287,7 +1254,7 @@ syscall2(struct trapframe *frame)
 
 #ifdef KTRACE
 	if (KTRPOINTP(p, td, KTR_SYSCALL)) {
-		ktrsyscall(lp, code, narg, (void *)(&args.nosys.sysmsg + 1));
+		ktrsyscall(lp, code, narg, argp);
 	}
 #endif
 
@@ -1296,14 +1263,14 @@ syscall2(struct trapframe *frame)
 	 * returns use %rax and %rdx.  %rdx is left unchanged for system
 	 * calls which return only one result.
 	 */
-	args.sysmsg_fds[0] = 0;
-	args.sysmsg_fds[1] = frame->tf_rdx;
+	sysmsg.sysmsg_fds[0] = 0;
+	sysmsg.sysmsg_fds[1] = frame->tf_rdx;
 
 	/*
 	 * The syscall might manipulate the trap frame. If it does it
 	 * will probably return EJUSTRETURN.
 	 */
-	args.sysmsg_frame = frame;
+	sysmsg.sysmsg_frame = frame;
 
 	STOPEVENT(p, S_SCE, narg);	/* MP aware */
 
@@ -1314,7 +1281,7 @@ syscall2(struct trapframe *frame)
 #ifdef SYSCALL_DEBUG
 	tsc_uclock_t tscval = rdtsc();
 #endif
-	error = (*callp->sy_call)(&args);
+	error = (*callp->sy_call)(&sysmsg, argp);
 #ifdef SYSCALL_DEBUG
 	tscval = rdtsc() - tscval;
 	tscval = tscval * 1000000 / (tsc_frequency / 1000);	/* ns */
@@ -1339,8 +1306,8 @@ out:
 		 */
 		p = curproc;
 		lp = curthread->td_lwp;
-		frame->tf_rax = args.sysmsg_fds[0];
-		frame->tf_rdx = args.sysmsg_fds[1];
+		frame->tf_rax = sysmsg.sysmsg_fds[0];
+		frame->tf_rdx = sysmsg.sysmsg_fds[1];
 		frame->tf_rflags &= ~PSL_C;
 	} else if (error == ERESTART) {
 		/*
@@ -1385,7 +1352,7 @@ bad:
 
 #ifdef KTRACE
 	if (KTRPOINTP(p, td, KTR_SYSRET)) {
-		ktrsysret(lp, code, error, args.sysmsg_result);
+		ktrsysret(lp, code, error, sysmsg.sysmsg_result);
 	}
 #endif
 
@@ -1407,6 +1374,81 @@ bad:
 		td->td_toks_stop - &td->td_toks_base,
 		callp->sy_call));
 #endif
+}
+
+/*
+ * Handles the syscall() and __syscall() API
+ */
+void xsyscall(struct sysmsg *sysmsg, struct nosys_args *uap);
+
+int
+sys_xsyscall(struct sysmsg *sysmsg, const struct nosys_args *uap)
+{
+	struct trapframe *frame;
+	struct sysent *callp;
+	union sysunion *argp;
+	struct thread *td;
+	struct proc *p;
+	const int regcnt = 5;	/* number of args passed in registers */
+	u_int code;
+	int error;
+	int narg;
+
+	td = curthread;
+	p = td->td_proc;
+	frame = sysmsg->sysmsg_frame;
+	code = (u_int)frame->tf_rdi;
+	if (code >= p->p_sysent->sv_size)
+		code = SYS___nosys;
+	argp = (union sysunion *)(&frame->tf_rdi + 1);
+	callp = &p->p_sysent->sv_table[code];
+	narg = callp->sy_narg;
+
+	/*
+	 * On x86_64 we get up to six arguments in registers.  The rest are
+	 * on the stack.  However, for syscall() and __syscall() the syscall
+	 * number is inserted as the first argument, so the limit is reduced
+	 * by one to five.
+	 */
+	if (__predict_false(narg > regcnt)) {
+		register_t *argsdst;
+		caddr_t params;
+
+		argsdst = (register_t *)&sysmsg->extargs;
+		bcopy(argp, argsdst, sizeof(register_t) * regcnt);
+		params = (caddr_t)frame->tf_rsp + sizeof(register_t);
+		error = copyin(params, &argsdst[regcnt],
+			       (narg - regcnt) * sizeof(register_t));
+		argp = (void *)argsdst;
+		if (error) {
+#ifdef KTRACE
+			if (KTRPOINTP(p, td, KTR_SYSCALL)) {
+				ktrsyscall(td->td_lwp, code, narg, argp);
+			}
+			if (KTRPOINTP(p, td, KTR_SYSRET)) {
+				ktrsysret(td->td_lwp, code, error,
+					  sysmsg->sysmsg_result);
+			}
+#endif
+			return error;
+		}
+	}
+
+#ifdef KTRACE
+	if (KTRPOINTP(p, td, KTR_SYSCALL)) {
+		ktrsyscall(td->td_lwp, code, narg, argp);
+	}
+#endif
+
+	error = (*callp->sy_call)(sysmsg, argp);
+
+#ifdef KTRACE
+	if (KTRPOINTP(p, td, KTR_SYSRET)) {
+		ktrsysret(td->td_lwp, code, error, sysmsg->sysmsg_result);
+	}
+#endif
+
+	return error;
 }
 
 void

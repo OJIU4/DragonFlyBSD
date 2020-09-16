@@ -858,8 +858,8 @@ vm_object_terminate(vm_object_t object)
 /*
  * The caller must hold the object.
  *
- * NOTE: In PMAP_ADVANCED mode it is possible for vm_page's to remain flagged
- *	 PG_MAPPED or PG_MAPPED|PG_WRITEABLE, even after pmap_mapped_sync()
+ * NOTE: It is possible for vm_page's to remain flagged PG_MAPPED
+ *	 or PG_MAPPED|PG_WRITEABLE, even after pmap_mapped_sync()
  *	 is called, due to normal pmap operations.  This is because only
  *	 global pmap operations on the vm_page can clear the bits and not
  *	 just local operations on individual pmaps.
@@ -951,8 +951,8 @@ vm_object_page_clean(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
 	}
 
 	pagerflags = (flags & (OBJPC_SYNC | OBJPC_INVAL)) ?
-			VM_PAGER_PUT_SYNC : VM_PAGER_CLUSTER_OK;
-	pagerflags |= (flags & OBJPC_INVAL) ? VM_PAGER_PUT_INVAL : 0;
+			OBJPC_SYNC : OBJPC_CLUSTER_OK;
+	pagerflags |= (flags & OBJPC_INVAL) ? OBJPC_INVAL : 0;
 
 	vp = object->handle;
 
@@ -1165,7 +1165,7 @@ vm_object_page_collect_flush(vm_object_t object, vm_page_t p, int pagerflags)
 			break;
 		if (tp == NULL)
 			break;
-		if ((pagerflags & VM_PAGER_IGNORE_CLEANCHK) == 0 &&
+		if ((pagerflags & OBJPC_IGNORE_CLEANCHK) == 0 &&
 		    (tp->flags & PG_CLEANCHK) == 0) {
 			vm_page_wakeup(tp);
 			break;
@@ -1197,7 +1197,7 @@ vm_object_page_collect_flush(vm_object_t object, vm_page_t p, int pagerflags)
 			break;
 		if (tp == NULL)
 			break;
-		if ((pagerflags & VM_PAGER_IGNORE_CLEANCHK) == 0 &&
+		if ((pagerflags & OBJPC_IGNORE_CLEANCHK) == 0 &&
 		    (tp->flags & PG_CLEANCHK) == 0) {
 			vm_page_wakeup(tp);
 			break;

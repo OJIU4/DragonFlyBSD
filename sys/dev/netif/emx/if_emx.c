@@ -184,6 +184,20 @@ static const struct emx_device {
 	EMX_DEVICE(PCH_CNP_I219_V6),
 	EMX_DEVICE(PCH_CNP_I219_LM7),
 	EMX_DEVICE(PCH_CNP_I219_V7),
+	EMX_DEVICE(PCH_CNP_I219_LM8),
+	EMX_DEVICE(PCH_CNP_I219_V8),
+	EMX_DEVICE(PCH_CNP_I219_LM9),
+	EMX_DEVICE(PCH_CNP_I219_V9),
+	EMX_DEVICE(PCH_CNP_I219_LM10),
+	EMX_DEVICE(PCH_CNP_I219_V10),
+	EMX_DEVICE(PCH_CNP_I219_LM11),
+	EMX_DEVICE(PCH_CNP_I219_V11),
+	EMX_DEVICE(PCH_CNP_I219_LM12),
+	EMX_DEVICE(PCH_CNP_I219_V12),
+	EMX_DEVICE(PCH_CNP_I219_LM13),
+	EMX_DEVICE(PCH_CNP_I219_V13),
+	EMX_DEVICE(PCH_CNP_I219_LM14),
+	EMX_DEVICE(PCH_CNP_I219_V14),
 
 	/* required last entry */
 	EMX_DEVICE_NULL
@@ -1125,7 +1139,7 @@ emx_start(struct ifnet *ifp, struct ifaltq_subque *ifsq)
 		ETHER_BPF_MTAP(ifp, m_head);
 
 		/* Set timeout in case hardware has problems transmitting. */
-		tdata->tx_watchdog.wd_timer = EMX_TX_TIMEOUT;
+		ifsq_watchdog_set_count(&tdata->tx_watchdog, EMX_TX_TIMEOUT);
 	}
 	if (idx >= 0)
 		E1000_WRITE_REG(&sc->hw, E1000_TDT(tdata->idx), idx);
@@ -1294,7 +1308,7 @@ emx_watchdog(struct ifaltq_subque *ifsq)
 		 * We don't need to call ifsq_devstart_sched() here.
 		 */
 		ifsq_clr_oactive(ifsq);
-		tdata->tx_watchdog.wd_timer = 0;
+		ifsq_watchdog_set_count(&tdata->tx_watchdog, 0);
 		return;
 	}
 
@@ -1303,7 +1317,7 @@ emx_watchdog(struct ifaltq_subque *ifsq)
 	 * don't reset the hardware.
 	 */
 	if (E1000_READ_REG(&sc->hw, E1000_STATUS) & E1000_STATUS_TXOFF) {
-		tdata->tx_watchdog.wd_timer = EMX_TX_TIMEOUT;
+		ifsq_watchdog_set_count(&tdata->tx_watchdog, EMX_TX_TIMEOUT);
 		return;
 	}
 
@@ -2217,7 +2231,7 @@ emx_setup_ifp(struct emx_softc *sc)
 		ifsq_set_hw_serialize(ifsq, &tdata->tx_serialize);
 		tdata->ifsq = ifsq;
 
-		ifsq_watchdog_init(&tdata->tx_watchdog, ifsq, emx_watchdog);
+		ifsq_watchdog_init(&tdata->tx_watchdog, ifsq, emx_watchdog, 0);
 	}
 
 	/*
@@ -2777,7 +2791,7 @@ emx_txeof(struct emx_txdata *tdata)
 
 		/* All clean, turn off the timer */
 		if (tdata->num_tx_desc_avail == tdata->num_tx_desc)
-			tdata->tx_watchdog.wd_timer = 0;
+			ifsq_watchdog_set_count(&tdata->tx_watchdog, 0);
 	}
 	tdata->tx_running = EMX_TX_RUNNING;
 }
@@ -2838,7 +2852,7 @@ emx_tx_collect(struct emx_txdata *tdata, boolean_t gc)
 
 		/* All clean, turn off the timer */
 		if (tdata->num_tx_desc_avail == tdata->num_tx_desc)
-			tdata->tx_watchdog.wd_timer = 0;
+			ifsq_watchdog_set_count(&tdata->tx_watchdog, 0);
 	}
 	if (!gc || tdata->tx_nmbuf > 0)
 		tdata->tx_running = EMX_TX_RUNNING;

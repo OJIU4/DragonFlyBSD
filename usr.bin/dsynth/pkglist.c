@@ -547,12 +547,13 @@ processPackageListBulk(int total)
 }
 
 pkg_t *
-GetPkgPkg(pkg_t *list)
+GetPkgPkg(pkg_t **listp)
 {
 	bulk_t *bulk;
 	pkg_t *scan;
+	pkg_t *s2;
 
-	for (scan = list; scan; scan = scan->bnext) {
+	for (scan = *listp; scan; scan = scan->bnext) {
 		if (strcmp(scan->portdir, "ports-mgmt/pkg") == 0)
 			return scan;
 	}
@@ -570,6 +571,19 @@ GetPkgPkg(pkg_t *list)
 	bulk->list = NULL;
 	freebulk(bulk);
 	donebulk();
+
+
+	/*
+	 * Include added packages to the total and add the initial bulk
+	 * built packages to the list so they get counted.
+	 */
+	for (s2 = scan; s2->bnext; s2 = s2->bnext)
+		++BuildTotal;
+	for (s2 = scan; s2->bnext; s2 = s2->bnext)
+		;
+	s2->bnext = *listp;
+	*listp = scan;
+	++BuildTotal;
 
 	return scan;
 }
@@ -952,8 +966,8 @@ childGetPackageInfo(bulk_t *bulk)
 	cav[cac++] = "-VFLAVORS";
 	cav[cac++] = "-VUSES";
 
-	fp = dexec_open(cav, cac, &pid, NULL, 1, 1);
-	free(portpath);
+	fp = dexec_open(portpath + strlen(DPortsPath) + 1, cav, cac,
+			&pid, NULL, 1, 1);
 	freestrp(&flavarg);
 
 	pkg = allocpkg();
@@ -1071,11 +1085,19 @@ childGetPackageInfo(bulk_t *bulk)
 	}
 
 	/*
+	 * Checksum the port directory tree.  This just rollsup crcs of the
+	 * path names and a few stat fields (mtime, size) in order to detect
+	 * if any modification has been made to the port.
+	 */
+	pkg->crc32 = crcDirTree(portpath);
+
+	/*
 	 * Only one pkg is put on the return list now.  This code no
 	 * longer creates pseudo-nodes for flavors (the frontend requests
 	 * each flavor instead).
 	 */
 	bulk->list = pkg;
+	free(portpath);
 }
 
 /*
@@ -1107,7 +1129,7 @@ childGetBinaryDistInfo(bulk_t *bulk)
 	cav[cac++] = repopath;
 	cav[cac++] = "%n-%v";
 
-	fp = dexec_open(cav, cac, &pid, NULL, 1, 0);
+	fp = dexec_open(NULL, cav, cac, &pid, NULL, 1, 0);
 	deleteme = DeleteObsoletePkgs;
 
 	while ((ptr = fgetln(fp, &len)) != NULL) {
@@ -1156,7 +1178,8 @@ childOptimizeEnv(bulk_t *bulk)
 	cav[cac++] = portpath;
 	cav[cac++] = "-V_PERL5_FROM_BIN";
 
-	fp = dexec_open(cav, cac, &pid, NULL, 1, 1);
+	fp = dexec_open(portpath + strlen(DPortsPath) + 1, cav, cac,
+			&pid, NULL, 1, 1);
 	free(portpath);
 
 	line = 1;

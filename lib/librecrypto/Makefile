@@ -2,7 +2,7 @@
 .include "Makefile.inc"
 
 LIB= 		private_crypto
-SHLIB_MAJOR=	45
+SHLIB_MAJOR=	46
 PRIVATELIB=	shpub
 
 SHLIBDIR?=	/lib
@@ -25,20 +25,11 @@ INCSDIR=	${INCLUDEDIR}/priv/openssl
 
 CFLAGS+=	-I${LCRYPTO_SRC}/modes -I${LCRYPTO_SRC}/asn1
 CFLAGS+=	-I${LCRYPTO_SRC}/bn -I${LCRYPTO_SRC}/ec -I${LCRYPTO_SRC}/ecdsa
+CFLAGS+=	-I${LCRYPTO_SRC}/ecdh -I${LCRYPTO_SRC}/cms
 CFLAGS+=	-I${LCRYPTO_SRC}/evp -I${.OBJDIR}
 
-CFLAGS+=	-DLIBRESSL_INTERNAL -D__BEGIN_HIDDEN_DECLS= -D__END_HIDDEN_DECLS=
+CFLAGS+=	-DLIBRESSL_INTERNAL
 CFLAGS+=	-D__STRICT_ALIGNMENT
-
-# Local sources:
-# Replacement for malloc-wrapper.c, base tools depend on CRYPTO_free() here:
-#  contrib/ldns/host2str.c	OPENSSL_free(), unused (only if USE_GOST)
-#  lib/libfetch/common.c	OPENSSL_free()
-#  lib/libtelnet/pk.c		OPENSSL_free()
-#  usr.bin/dc/bcode.c		OPENSSL_free(), unused (only if DEBUGGING)
-#  usr.bin/newkey/generic.c	OPENSSL_free()
-#  contrib/wpa_supplicant/src/crypto/tls_openssl.c OPENSSL_malloc() XXX
-SRCS_LOCAL=	CRYPTO_free.c CRYPTO_malloc.c
 
 # Do not use ASM if -flto for now
 .if ${CFLAGS:M-flto}
@@ -93,8 +84,8 @@ NOASM_WHRLPOOL=
 # Based on vendor libcrypto_la_SOURCES definitions with subdirectories stripped out
 
 SRC_TOP=	cpt_err.c cryptlib.c crypto_init.c crypto_lock.c cversion.c \
-		ex_data.c mem_dbg.c o_init.c o_time.c
-# not needed: malloc-wrapper.c mem_clr.c o_str.c
+		ex_data.c malloc-wrapper.c mem_dbg.c o_init.c o_time.c
+# not needed: mem_clr.c o_str.c
 SRC_AES=	aes_ige.c aes_misc.c aes_wrap.c ${NOASM_AES}
 # not needed: aes_cfb.c aes_ctr.c aes_ecb.c aes_ofb.c
 SRC_ASN1=	a_bitstr.c a_bool.c a_d2i_fp.c a_digest.c a_dup.c a_enum.c \
@@ -132,6 +123,9 @@ SRC_CAMELLIA=	cmll_cfb.c cmll_ctr.c cmll_ecb.c cmll_misc.c \
 SRC_CAST=	c_cfb64.c c_ecb.c c_enc.c c_ofb64.c c_skey.c
 SRC_CHACHA=	chacha.c
 SRC_CMAC=	cm_ameth.c cm_pmeth.c cmac.c
+SRC_CMS=	cms_asn1.c cms_cd.c cms_enc.c cms_err.c cms_io.c cms_pwri.c \
+		cms_smime.c cms_att.c cms_dd.c cms_env.c cms_ess.c cms_kari.c \
+		cms_lib.c cms_sd.c
 SRC_COMP=
 # not needed: c_rle.c c_zlib.c comp_err.c comp_lib.c
 SRC_CONF=	conf_api.c conf_def.c conf_err.c conf_lib.c \
@@ -158,7 +152,7 @@ SRC_EC=		ec2_mult.c ec2_oct.c ec2_smpl.c ec_ameth.c ec_asn1.c \
 		ec_check.c ec_curve.c ec_cvt.c ec_err.c ec_key.c ec_kmeth.c \
 		ec_lib.c ec_mult.c ec_oct.c ec_pmeth.c ec_print.c \
 		eck_prn.c ecp_mont.c ecp_nist.c ecp_oct.c ecp_smpl.c
-SRC_ECDH=	ech_err.c ech_key.c ech_lib.c
+SRC_ECDH=	ecdh_kdf.c ech_err.c ech_key.c ech_lib.c
 SRC_ECDSA=	ecs_asn1.c ecs_err.c ecs_lib.c ecs_ossl.c ecs_sign.c ecs_vrf.c
 SRC_ENGINE=	# explicitly disabled
 #SRC_ENGINE=	eng_all.c eng_cnf.c eng_ctrl.c eng_dyn.c eng_err.c eng_fat.c \
@@ -243,7 +237,7 @@ SRC_X509V3=	pcy_cache.c pcy_data.c pcy_lib.c pcy_map.c pcy_node.c \
 
 SRCS=		${ASM_X86_64_ELF} ${SRC_TOP} ${SRC_AES} ${SRC_ASN1} \
 		${SRC_BF} ${SRC_BIO} ${SRC_BN} ${SRC_BUFFER} ${SRC_CAMELLIA} \
-		${SRC_CAST} ${SRC_CHACHA} ${SRC_CMAC} ${SRC_COMP} \
+		${SRC_CAST} ${SRC_CHACHA} ${SRC_CMAC} ${SRC_CMS} ${SRC_COMP} \
 		${SRC_CONF} ${SRC_DES} ${SRC_DH} ${SRC_DSA} ${SRC_DSO} \
 		${SRC_EC} ${SRC_ECDH} ${SRC_ECDSA} ${SRC_ENGINE} ${SRC_ERR} \
 		${SRC_EVP} ${SRC_GOST} ${SRC_HMAC} ${SRC_HKDF} ${SRC_IDEA} \
@@ -254,7 +248,6 @@ SRCS=		${ASM_X86_64_ELF} ${SRC_TOP} ${SRC_AES} ${SRC_ASN1} \
 		${SRC_TXT_DB} ${SRC_UI} ${SRC_WHRLPOOL} ${SRC_X509} \
 		${SRC_X509V3} ${SRC_CURVE25519} \
 		${SRC_RC4} ${SRC_SM3} ${SRC_SM4}
-SRCS+=		${SRCS_LOCAL}
 
 .PATH:	${LCRYPTO_SRC} \
 	${LCRYPTO_SRC}/aes \
@@ -267,6 +260,7 @@ SRCS+=		${SRCS_LOCAL}
 	${LCRYPTO_SRC}/cast \
 	${LCRYPTO_SRC}/chacha \
 	${LCRYPTO_SRC}/cmac \
+	${LCRYPTO_SRC}/cms \
 	${LCRYPTO_SRC}/conf \
 	${LCRYPTO_SRC}/curve25519 \
 	${LCRYPTO_SRC}/des \

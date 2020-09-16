@@ -527,32 +527,41 @@ tmpfs_alloc_file(struct vnode *dvp, struct vnode **vpp, struct vattr *vap,
 	dnode = VP_TO_TMPFS_DIR(dvp);
 	*vpp = NULL;
 
+	TMPFS_NODE_LOCK(dnode);
+
 	/*
 	 * If the directory was removed but a process was CD'd into it,
 	 * we do not allow any more file/dir creation within it.  Otherwise
 	 * we will lose track of it.
 	 */
 	KKASSERT(dnode->tn_type == VDIR);
-	if (dnode != tmp->tm_root && dnode->tn_dir.tn_parent == NULL)
+	if (dnode != tmp->tm_root && dnode->tn_dir.tn_parent == NULL) {
+		TMPFS_NODE_UNLOCK(dnode);
 		return ENOENT;
+	}
 
 	/*
 	 * Make sure the link count does not overflow.
 	 */
-	if (vap->va_type == VDIR && dnode->tn_links >= LINK_MAX)
+	if (vap->va_type == VDIR && dnode->tn_links >= LINK_MAX) {
+		TMPFS_NODE_UNLOCK(dnode);
 		return EMLINK;
+	}
 
 	/* Allocate a node that represents the new file. */
 	error = tmpfs_alloc_node(tmp, vap->va_type, cred->cr_uid,
 				 dnode->tn_gid, vap->va_mode, target,
 				 vap->va_rmajor, vap->va_rminor, &node);
-	if (error != 0)
+	if (error != 0) {
+		TMPFS_NODE_UNLOCK(dnode);
 		return error;
+	}
 	TMPFS_NODE_LOCK(node);
 
 	/* Allocate a directory entry that points to the new file. */
 	error = tmpfs_alloc_dirent(tmp, node, ncp->nc_name, ncp->nc_nlen, &de);
 	if (error != 0) {
+		TMPFS_NODE_UNLOCK(dnode);
 		tmpfs_free_node(tmp, node);
 		/* eats node lock */
 		return error;
@@ -561,6 +570,7 @@ tmpfs_alloc_file(struct vnode *dvp, struct vnode **vpp, struct vattr *vap,
 	/* Allocate a vnode for the new file. */
 	error = tmpfs_alloc_vp(dvp->v_mount, NULL, node, LK_EXCLUSIVE, vpp);
 	if (error != 0) {
+		TMPFS_NODE_UNLOCK(dnode);
 		tmpfs_free_dirent(tmp, de);
 		tmpfs_free_node(tmp, node);
 		/* eats node lock */
@@ -572,7 +582,8 @@ tmpfs_alloc_file(struct vnode *dvp, struct vnode **vpp, struct vattr *vap,
 	 * insert the new node into the directory, an operation that
 	 * cannot fail.
 	 */
-	tmpfs_dir_attach(dnode, de);
+	tmpfs_dir_attach_locked(dnode, de);
+	TMPFS_NODE_UNLOCK(dnode);
 	TMPFS_NODE_UNLOCK(node);
 
 	return error;
@@ -584,13 +595,15 @@ tmpfs_alloc_file(struct vnode *dvp, struct vnode **vpp, struct vattr *vap,
  * Attaches the directory entry de to the directory represented by dnode.
  * Note that this does not change the link count of the node pointed by
  * the directory entry, as this is done by tmpfs_alloc_dirent.
+ *
+ * dnode must be locked.
  */
 void
-tmpfs_dir_attach(struct tmpfs_node *dnode, struct tmpfs_dirent *de)
+tmpfs_dir_attach_locked(struct tmpfs_node *dnode, struct tmpfs_dirent *de)
 {
 	struct tmpfs_node *node = de->td_node;
+	struct tmpfs_dirent *de2;
 
-	TMPFS_NODE_LOCK(dnode);
 	if (node && node->tn_type == VDIR) {
 		TMPFS_NODE_LOCK(node);
 		atomic_add_int(&node->tn_links, 1);
@@ -599,12 +612,17 @@ tmpfs_dir_attach(struct tmpfs_node *dnode, struct tmpfs_dirent *de)
 		atomic_add_int(&dnode->tn_links, 1);
 		TMPFS_NODE_UNLOCK(node);
 	}
-	RB_INSERT(tmpfs_dirtree, &dnode->tn_dir.tn_dirtree, de);
-	RB_INSERT(tmpfs_dirtree_cookie, &dnode->tn_dir.tn_cookietree, de);
+	de2 = RB_INSERT(tmpfs_dirtree, &dnode->tn_dir.tn_dirtree, de);
+	KASSERT(de2 == NULL,
+		("tmpfs_dir_attach_lockedA: duplicate insertion of %p, has %p\n",
+		de, de2));
+	de2 = RB_INSERT(tmpfs_dirtree_cookie, &dnode->tn_dir.tn_cookietree, de);
+	KASSERT(de2 == NULL,
+		("tmpfs_dir_attach_lockedB: duplicate insertion of %p, has %p\n",
+		de, de2));
 	dnode->tn_size += sizeof(struct tmpfs_dirent);
 	dnode->tn_status |= TMPFS_NODE_ACCESSED | TMPFS_NODE_CHANGED |
 			    TMPFS_NODE_MODIFIED;
-	TMPFS_NODE_UNLOCK(dnode);
 }
 
 /* --------------------------------------------------------------------- */
@@ -613,19 +631,19 @@ tmpfs_dir_attach(struct tmpfs_node *dnode, struct tmpfs_dirent *de)
  * Detaches the directory entry de from the directory represented by dnode.
  * Note that this does not change the link count of the node pointed by
  * the directory entry, as this is done by tmpfs_free_dirent.
+ *
+ * dnode must be locked.
  */
 void
-tmpfs_dir_detach(struct tmpfs_node *dnode, struct tmpfs_dirent *de)
+tmpfs_dir_detach_locked(struct tmpfs_node *dnode, struct tmpfs_dirent *de)
 {
 	struct tmpfs_node *node = de->td_node;
 
-	TMPFS_NODE_LOCK(dnode);
 	RB_REMOVE(tmpfs_dirtree, &dnode->tn_dir.tn_dirtree, de);
 	RB_REMOVE(tmpfs_dirtree_cookie, &dnode->tn_dir.tn_cookietree, de);
 	dnode->tn_size -= sizeof(struct tmpfs_dirent);
 	dnode->tn_status |= TMPFS_NODE_ACCESSED | TMPFS_NODE_CHANGED |
 			    TMPFS_NODE_MODIFIED;
-	TMPFS_NODE_UNLOCK(dnode);
 
 	/*
 	 * Clean out the tn_parent pointer immediately when removing a
@@ -639,14 +657,12 @@ tmpfs_dir_detach(struct tmpfs_node *dnode, struct tmpfs_dirent *de)
 	 * scan.
 	 */
 	if (node && node->tn_type == VDIR && node->tn_dir.tn_parent) {
-		TMPFS_NODE_LOCK(dnode);
 		TMPFS_NODE_LOCK(node);
 		KKASSERT(node->tn_dir.tn_parent == dnode);
 		atomic_add_int(&dnode->tn_links, -1);
 		atomic_add_int(&node->tn_links, -1);
 		node->tn_dir.tn_parent = NULL;
 		TMPFS_NODE_UNLOCK(node);
-		TMPFS_NODE_UNLOCK(dnode);
 	}
 }
 
@@ -677,7 +693,9 @@ tmpfs_dir_lookup(struct tmpfs_node *node, struct tmpfs_node *f,
 
 	de = RB_FIND(tmpfs_dirtree, &node->tn_dir.tn_dirtree, &wanted);
 
-	KKASSERT(f == NULL || de == NULL || f == de->td_node);
+	KASSERT((f == NULL || de == NULL || f == de->td_node),
+		("tmpfs_dir_lookup: Incorrect node %p %p %p",
+		 f, de, (de ? de->td_node : NULL)));
 
 	return de;
 }
@@ -1384,19 +1402,33 @@ tmpfs_dirtree_compare_cookie(struct tmpfs_dirent *a, struct tmpfs_dirent *b)
 }
 
 /*
- * Lock for rename.  The namecache entries are already locked so
- * theoretically we should be able to lock the directories in any
- * order.  Underlying files must be locked after the related directory.
+ * Lock for rename.  The namecache entries for the related terminal files
+ * are already locked but the directories are not.  A directory lock order
+ * reversal is possible so use a deterministic order.
+ *
+ * Generally order path parent-to-child or using a simple pointer comparison.
+ * Probably not perfect but it should catch most of the cases.
+ *
+ * Underlying files must be locked after the related directory.
  */
 void
 tmpfs_lock4(struct tmpfs_node *node1, struct tmpfs_node *node2,
 	    struct tmpfs_node *node3, struct tmpfs_node *node4)
 {
-	TMPFS_NODE_LOCK(node1);		/* fdir */
-	TMPFS_NODE_LOCK(node3);		/* ffile */
-	TMPFS_NODE_LOCK(node2);		/* tdir */
-	if (node4)
-		TMPFS_NODE_LOCK(node4);	/* tfile */
+	if (node1->tn_dir.tn_parent != node2 &&
+	    (node1 < node2 || node2->tn_dir.tn_parent == node1)) {
+		TMPFS_NODE_LOCK(node1);		/* fdir */
+		TMPFS_NODE_LOCK(node3);		/* ffile */
+		TMPFS_NODE_LOCK(node2);		/* tdir */
+		if (node4)
+			TMPFS_NODE_LOCK(node4);	/* tfile */
+	} else {
+		TMPFS_NODE_LOCK(node2);		/* tdir */
+		if (node4)
+			TMPFS_NODE_LOCK(node4);	/* tfile */
+		TMPFS_NODE_LOCK(node1);		/* fdir */
+		TMPFS_NODE_LOCK(node3);		/* ffile */
+	}
 }
 
 void

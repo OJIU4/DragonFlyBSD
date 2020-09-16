@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 François Tigeot
+ * Copyright (c) 2017-2020 François Tigeot <ftigeot@wolfpond.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,6 +26,8 @@
 
 #ifndef _UAPI_ASM_GENERIC_INT_LL64_H_
 #define _UAPI_ASM_GENERIC_INT_LL64_H_
+
+#include <asm/bitsperlong.h>
 
 #include <sys/types.h>
 

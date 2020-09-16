@@ -70,7 +70,6 @@ static void alloc_direct(hammer2_off_t *basep, hammer2_blockref_t *bref,
 				size_t bytes);
 
 static int Hammer2Version = -1;
-static int ForceOpt;
 static uuid_t Hammer2_FSType;	/* static filesystem type id for HAMMER2 */
 static uuid_t Hammer2_VolFSID;	/* unique filesystem id in volu header */
 static uuid_t Hammer2_SupCLID;	/* PFS cluster id in super-root inode */
@@ -126,11 +125,8 @@ main(int ac, char **av)
 	/*
 	 * Parse arguments
 	 */
-	while ((ch = getopt(ac, av, "fL:b:r:V:")) != -1) {
+	while ((ch = getopt(ac, av, "L:b:r:V:")) != -1) {
 		switch(ch) {
-		case 'f':
-			ForceOpt = 1;
-			break;
 		case 'L':
 			defaultlabels = 0;
 			if (strcasecmp(optarg, "none") == 0) {
@@ -154,7 +150,7 @@ main(int ac, char **av)
 		case 'r':
 			AuxAreaSize = getsize(optarg,
 					 HAMMER2_NEWFS_ALIGN,
-					 HAMMER2_REDO_MAX_BYTES, 2);
+					 HAMMER2_AUX_MAX_BYTES, 2);
 			break;
 		case 'V':
 			Hammer2Version = strtol(optarg, NULL, 0);
@@ -250,20 +246,20 @@ main(int ac, char **av)
 		        ~HAMMER2_VOLUME_ALIGNMASK64;
 
 	/*
-	 * Calculate defaults for the redo area size and round to the
+	 * Calculate defaults for the aux area size and round to the
 	 * volume alignment boundary.
 	 *
 	 * NOTE: These areas are currently not used for logging but are
 	 *	 reserved for future filesystem expansion.
 	 */
 	if (AuxAreaSize == 0) {
-		AuxAreaSize = HAMMER2_REDO_NOM_BYTES;
+		AuxAreaSize = HAMMER2_AUX_NOM_BYTES;
 		while (AuxAreaSize > total_space / 20)
 			AuxAreaSize >>= 1;
-		if (AuxAreaSize < HAMMER2_REDO_MIN_BYTES)
-			AuxAreaSize = HAMMER2_REDO_MIN_BYTES;
-	} else if (AuxAreaSize < HAMMER2_REDO_MIN_BYTES) {
-		AuxAreaSize = HAMMER2_REDO_MIN_BYTES;
+		if (AuxAreaSize < HAMMER2_AUX_MIN_BYTES)
+			AuxAreaSize = HAMMER2_AUX_MIN_BYTES;
+	} else if (AuxAreaSize < HAMMER2_AUX_MIN_BYTES) {
+		AuxAreaSize = HAMMER2_AUX_MIN_BYTES;
 	}
 	AuxAreaSize = (AuxAreaSize + HAMMER2_VOLUME_ALIGNMASK64) &
 		       ~HAMMER2_VOLUME_ALIGNMASK64;
@@ -277,10 +273,10 @@ main(int ac, char **av)
 
 	/*
 	 * Calculate the amount of reserved space.  HAMMER2_ZONE_SEG (4MB)
-	 * is reserved at the beginning of every 2GB of storage, rounded up.
+	 * is reserved at the beginning of every 1GB of storage, rounded up.
 	 * Thus a 200MB filesystem will still have a 4MB reserve area.
 	 *
-	 * We also include the boot and redo areas in the reserve.  The
+	 * We also include the boot and aux areas in the reserve.  The
 	 * reserve is used to help 'df' calculate the amount of available
 	 * space.
 	 *
@@ -293,6 +289,10 @@ main(int ac, char **av)
 			  HAMMER2_FREEMAP_LEVEL1_SIZE) * HAMMER2_ZONE_SEG64;
 
 	free_space = total_space - reserved_space - BootAreaSize - AuxAreaSize;
+	if ((int64_t)free_space < 0) {
+		fprintf(stderr, "Not enough free space\n");
+		exit(1);
+	}
 
 	format_hammer2(fd, total_space, free_space);
 	fsync(fd);
@@ -317,7 +317,6 @@ main(int ac, char **av)
 		printf("    clid %s\n", pfs_clid_name);
 		printf("    fsid %s\n", pfs_fsid_name);
 	}
-	printf("\n");
 
 	free(vol_fsid);
 	free(sup_clid_name);
@@ -333,7 +332,7 @@ void
 usage(void)
 {
 	fprintf(stderr,
-		"usage: newfs_hammer2 [-f] [-b bootsize] [-r redosize] "
+		"usage: newfs_hammer2 [-b bootsize] [-r auxsize] "
 		"[-V version] [-L label ...] special\n"
 	);
 	exit(1);
@@ -511,13 +510,13 @@ format_hammer2(int fd, hammer2_off_t total_space, hammer2_off_t free_space)
 
 	/*
 	 * Make sure alloc_base won't cross the reserved area at the
-	 * beginning of each 2GB zone.
+	 * beginning of each 1GB.
 	 *
 	 * Reserve space for the super-root inode and the root inode.
 	 * Make sure they are in the same 64K block to simplify our code.
 	 */
 	assert((alloc_base & HAMMER2_PBUFMASK) == 0);
-	assert(alloc_base < HAMMER2_ZONE_BYTES64 - HAMMER2_ZONE_SEG);
+	assert(alloc_base < HAMMER2_FREEMAP_LEVEL1_SIZE);
 
 	/*
 	 * Clear the boot/aux area.
@@ -542,7 +541,7 @@ format_hammer2(int fd, hammer2_off_t total_space, hammer2_off_t free_space)
 		alloc_direct(&alloc_base, &root_blockref[i],
 			     HAMMER2_INODE_BYTES);
 		assert(((sroot_blockref.data_off ^ root_blockref[i].data_off) &
-			HAMMER2_OFF_MASK_HI) == 0);
+			~HAMMER2_PBUFMASK64) == 0);
 
 		/*
 		 * Format the root directory inode, which is left empty.
@@ -575,7 +574,7 @@ format_hammer2(int fd, hammer2_off_t total_space, hammer2_off_t free_space)
 						    HAMMER2_COMP_AUTOZERO);
 			rawip->meta.check_algo = HAMMER2_ENC_ALGO(
 						    HAMMER2_CHECK_XXHASH64);
-		} else  {
+		} else {
 			rawip->meta.comp_algo = HAMMER2_ENC_ALGO(
 						    HAMMER2_COMP_NEWFS_DEFAULT);
 			rawip->meta.check_algo = HAMMER2_ENC_ALGO(
@@ -691,8 +690,10 @@ format_hammer2(int fd, hammer2_off_t total_space, hammer2_off_t free_space)
 	/*
 	 * Write out the 64K HAMMER2 block containing the root and sroot.
 	 */
+	assert((sroot_blockref.data_off & ~HAMMER2_PBUFMASK64) ==
+		((alloc_base - 1) & ~HAMMER2_PBUFMASK64));
 	n = pwrite(fd, buf, HAMMER2_PBUFSIZE,
-		   sroot_blockref.data_off & HAMMER2_OFF_MASK_HI);
+		   sroot_blockref.data_off & ~HAMMER2_PBUFMASK64);
 	if (n != HAMMER2_PBUFSIZE) {
 		perror("write");
 		exit(1);
@@ -704,6 +705,7 @@ format_hammer2(int fd, hammer2_off_t total_space, hammer2_off_t free_space)
 	 * The volume header points to sroot_blockref.  Also be absolutely
 	 * sure that allocator_beg is set.
 	 */
+	assert(HAMMER2_VOLUME_BYTES <= HAMMER2_PBUFSIZE);
 	bzero(buf, HAMMER2_PBUFSIZE);
 	vol = (void *)buf;
 

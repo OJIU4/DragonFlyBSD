@@ -29,7 +29,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * @(#) Copyright (c) 1991, 1993 The Regents of the University of California.  All rights reserved.
  * @(#)tail.c	8.1 (Berkeley) 6/6/93
  * $FreeBSD: src/usr.bin/tail/tail.c,v 1.6.2.2 2001/12/19 20:29:31 iedowse Exp $
  */
@@ -44,7 +43,7 @@
 #include <err.h>
 #include "extern.h"
 
-int Fflag, fflag, qflag, rflag, rval, no_files;
+int Fflag, fflag, qflag, rflag, vflag, rval, no_files;
 const char *fname;
 
 #ifndef BOOTSTRAPPING
@@ -52,12 +51,13 @@ file_info_t *files;
 #endif
 
 static void obsolete(char **);
-static void usage(void);
+static void usage(void) __dead2;
 static void getarg(int, enum STYLE, enum STYLE, enum STYLE *, int *, off_t *);
 
 int
 main(int argc, char **argv)
 {
+	const char *optstring;
 	struct stat sb;
 	FILE *fp;
 	off_t off = 0;
@@ -68,9 +68,19 @@ main(int argc, char **argv)
 	file_info_t *file;
 #endif
 
+	if (strcmp(getprogname(), "tac") == 0) {
+		optstring = "";
+		qflag = 1;
+		rflag = 1;
+		vflag = 0;
+	} else {
+		/* tail */
+		optstring = "Fb:c:fn:qrv";
+	}
+
 	obsolete(argv);
 	style_set = 0;
-	while ((ch = getopt(argc, argv, "Fb:c:fn:qr")) != -1)
+	while ((ch = getopt(argc, argv, optstring)) != -1) {
 		switch(ch) {
 		case 'F':	/* -F is superset of (and implies) -f */
 #ifndef BOOTSTRAPPING
@@ -93,14 +103,19 @@ main(int argc, char **argv)
 			break;
 		case 'q':
 			qflag = 1;
+			vflag = 0;
 			break;
 		case 'r':
 			rflag = 1;
 			break;
-		case '?':
+		case 'v':
+			vflag = 1;
+			qflag = 0;
+			break;
 		default:
 			usage();
 		}
+	}
 	argc -= optind;
 	argv += optind;
 
@@ -163,7 +178,7 @@ main(int argc, char **argv)
 				ierr();
 				continue;
 			}
-			if (argc > 1) {
+			if (vflag || argc > 1) {
 				showfilename(i, fname);
 				(void)fflush(stdout);
 			}
@@ -329,10 +344,15 @@ obsolete(char **argv)
 	}
 }
 
-static void
+static void __dead2
 usage(void)
 {
-	(void)fprintf(stderr,
-	    "usage: tail [-F | -f | -r] [-b # | -c # | -n #] [file ...]\n");
+	if (strcmp(getprogname(), "tac") == 0) {
+		fprintf(stderr, "usage: tac [file ...]\n");
+	} else {
+		fprintf(stderr,
+			"usage: tail [-F | -f | -r] [-q | -v] "
+			"[-b # | -c # | -n #] [file ...]\n");
+	}
 	exit(1);
 }

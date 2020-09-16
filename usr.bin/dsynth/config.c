@@ -128,8 +128,6 @@ ParseConfiguration(int isworker)
 	len = sizeof(PhysMem);
 	if (sysctlbyname("hw.physmem", &PhysMem, &len, NULL, 0) < 0)
 		dfatal_errno("Cannot get hw.physmem");
-	if (PkgDepMemoryTarget == 0)
-		PkgDepMemoryTarget = PhysMem / 3;
 
 	/*
 	 * Calculate nominal defaults.
@@ -188,15 +186,30 @@ ParseConfiguration(int isworker)
 	 * Not supported for the moment
 	 */
 	if (strcmp(CCachePath, "disabled") != 0) {
-		dfatal("Directory_ccache is not supported, please\n"
-		       " set to 'disabled'\n");
-		/* NOT REACHED */
+		/* dfatal("Directory_ccache is not supported, please\n"
+		       " set to 'disabled'\n"); */
 		UseCCache = 1;
 	}
 	asprintf(&buf, "%s/usr/src/sys/Makefile", SystemPath);
 	if (stat(buf, &st) == 0)
 		UseUsrSrc = 1;
 	free(buf);
+
+	/*
+	 * Default pkg dependency memory target.  This is a heuristical
+	 * calculation for how much memory we are willing to put towards
+	 * pkg install dependencies.  The builder count is reduced as needed.
+	 *
+	 * Reduce the target even further when CCache is enabled due to
+	 * its added overhead (even though it doesn't use tmpfs).
+	 * (NOT CURRENTLY IMPLEMENTED, LEAVE THE SAME)
+	 */
+	if (PkgDepMemoryTarget == 0) {
+		if (UseCCache)
+			PkgDepMemoryTarget = PhysMem / 3;
+		else
+			PkgDepMemoryTarget = PhysMem / 3;
+	}
 
 	/*
 	 * If this is a dsynth WORKER exec it handles a single slot,

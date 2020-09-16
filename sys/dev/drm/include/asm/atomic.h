@@ -27,6 +27,11 @@
 #ifndef _ASM_ATOMIC_H_
 #define _ASM_ATOMIC_H_
 
+#include <linux/compiler.h>
+#include <linux/types.h>
+#include <asm/cmpxchg.h>
+#include <asm/barrier.h>
+
 /* atomic_or: atomically set bits in a variable */
 #define atomic_or(mask, addr)		\
 	/* atomic *addr |= mask; */		\

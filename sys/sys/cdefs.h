@@ -66,16 +66,42 @@
 #endif
 
 #if defined(__cplusplus)
-#if __GNUC_PREREQ__(4, 0)
-#define	__BEGIN_DECLS	_Pragma("GCC visibility push(default)") extern "C" {
-#define	__END_DECLS	} _Pragma("GCC visibility pop")
-#else
-#define	__BEGIN_DECLS	extern "C" {
-#define	__END_DECLS	}
-#endif
+#define	__BEGIN_EXTERN_C	extern "C" {
+#define	__END_EXTERN_C		}
 #else
 #define	__BEGIN_DECLS
 #define	__END_DECLS
+#define	__BEGIN_EXTERN_C
+#define	__END_EXTERN_C
+#endif
+
+#if __GNUC_PREREQ__(4, 0)
+#define	__dso_public	__attribute__((__visibility__("default")))
+#define	__dso_hidden	__attribute__((__visibility__("hidden")))
+#define	__BEGIN_PUBLIC_DECLS \
+			_Pragma("GCC visibility push(default)") __BEGIN_EXTERN_C
+#define	__END_PUBLIC_DECLS \
+			__END_EXTERN_C _Pragma("GCC visibility pop")
+#define	__BEGIN_HIDDEN_DECLS \
+			_Pragma("GCC visibility push(hidden)") __BEGIN_EXTERN_C
+#define	__END_HIDDEN_DECLS \
+			__END_EXTERN_C _Pragma("GCC visibility pop")
+#else
+#define	__dso_public
+#define	__dso_hidden
+#define	__BEGIN_PUBLIC_DECLS \
+			__BEGIN_EXTERN_C
+#define	__END_PUBLIC_DECLS \
+			__END_EXTERN_C
+#define	__BEGIN_HIDDEN_DECLS \
+			__BEGIN_EXTERN_C
+#define	__END_HIDDEN_DECLS \
+			__END_EXTERN_C
+#endif
+
+#if defined(__cplusplus)
+#define	__BEGIN_DECLS	__BEGIN_PUBLIC_DECLS
+#define	__END_DECLS	__END_PUBLIC_DECLS
 #endif
 
 /*
@@ -167,11 +193,6 @@
 #define	__packed	__attribute__((__packed__))
 #define	__aligned(x)	__attribute__((__aligned__(x)))
 #define	__section(x)	__attribute__((__section__(x)))
-#define __read_mostly		__section(".data.read_mostly")
-#define __read_frequently	__section(".data.read_frequently")
-#define __exclusive_cache_line	__aligned(__VM_CACHELINE_SIZE*2)	\
-				__section(".data.exclusive_cache_line")
-
 #else
 #define	__dead2
 #define	__pure2
@@ -212,6 +233,12 @@
 #define	__returns_twice	__attribute__((__returns_twice__))
 #else
 #define	__returns_twice
+#endif
+
+#if __GNUC_PREREQ__(4, 6) || __has_builtin(__builtin_unreachable)
+#define	__unreachable()	__builtin_unreachable()
+#else
+#define	__unreachable()	((void)0)
 #endif
 
 #if __GNUC_PREREQ__(4, 3) || __has_attribute(__alloc_size__)
@@ -385,14 +412,6 @@
 #define	__ARRAY_ZERO
 #endif
 
-#if __GNUC_PREREQ__(4, 0)
-#define	__dso_public	__attribute__((__visibility__("default")))
-#define	__dso_hidden	__attribute__((__visibility__("hidden")))
-#else
-#define	__dso_public
-#define	__dso_hidden
-#endif
-
 /*
  * A convenient constructor macro, GCC 4.3.0 added priority support to
  * constructors, provide a compatible interface for both.
@@ -534,6 +553,18 @@
 #define	CTASSERT(x)		_CTASSERT(x, __LINE__)
 #define	_CTASSERT(x, y)		__CTASSERT(x, y)
 #define	__CTASSERT(x, y)	typedef char __assert ## y[(x) ? 1 : -1]
+#endif
+#endif
+
+/*
+ * GCC 4.7 has -std=c++11 but does not support thread_local.
+ */
+#if !__has_extension(c_thread_local)
+#if (defined(__cplusplus) && __cplusplus >= 201103L && __GNUC_PREREQ__(4, 8)) || \
+    __has_extension(cxx_thread_local)
+#define	_Thread_local		thread_local
+#else
+#define	_Thread_local		__thread
 #endif
 #endif
 #endif

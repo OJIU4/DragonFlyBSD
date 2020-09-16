@@ -22,10 +22,9 @@ bsd.cpu.gcc80.mk	- handle GCC 8.0 specific CPU flags & variables
 bsd.cpu.mk		- handle CPU flags & variables
 bsd.crunchgen.mk	- building crunched binaries using crunchgen(1)
 bsd.dep.mk		- handle Makefile dependencies
-bsd.doc.mk		- building troff system documents
 bsd.files.mk		- install of general purpose files
-bsd.hostlib.mk		- 
-bsd.hostprog.mk		- 
+bsd.hostlib.mk		- handle libraries built with host tools and libraries
+bsd.hostprog.mk		- handle programs built with host tools and libraries
 bsd.incs.mk		- install of include files
 bsd.init.mk		- initialization for the make include files
 bsd.kmod.mk		- building loadable kernel modules
@@ -36,15 +35,13 @@ bsd.man.mk		- install of manual pages and their links
 bsd.nls.mk		- build and install of NLS catalogs
 bsd.obj.mk		- creating 'obj' directories and cleaning up
 bsd.own.mk		- define common variables
-bsd.patch.mk		- 
 bsd.prog.mk		- building programs from source files
 bsd.subdir.mk		- targets for building subdirectories
 bsd.sys.mk		- common settings used for building DragonFly sources
 sys.mk			- default rules for all makes
 
 
-See also make(1), mkdep(1) and `PMake - A Tutorial', 
-located in /usr/src/share/doc/psd/12.make.
+See also make(1) and mkdep(1).
 
 =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
@@ -147,7 +144,7 @@ MANINSTALLFLAGS	Additional flags to pass to install(1).
 
 MLINKS		List of manual page links (using a .1 - .9 suffix).  The
 		linked-to file must come first, the linked file second,
-		and there may be multiple pairs.  The files are soft-linked.
+		and there may be multiple pairs.  The files are hard-linked.
 
 The include file <bsd.man.mk> includes a file named "../Makefile.inc" if
 it exists.
@@ -239,12 +236,15 @@ LDADD		Additional loader objects.  Usually used for libraries.
 
 LDFLAGS		Additional loader flags.
 
-LINKS		The list of binary links; should be full pathnames, the
-		linked-to file coming first, followed by the linked
-		file.  The files are hard-linked.  For example, to link
-		/bin/test and /bin/[, use:
+LINKS		The list of hard links; should be full pathnames, the
+		linked-to file coming first, followed by the linked file.
+		For example, to link "/bin/test" and "/bin/[", use:
 
-			LINKS=	${DESTDIR}/bin/test ${DESTDIR}/bin/[
+			LINKS=	/bin/test /bin/[
+
+SYMLINKS	The list of symbolic links.  The linked-to file comes
+		first (can be a relative path), followed by the linked
+		file (should be a full path).
 
 MAN		Manual pages (should end in .1 - .9).  If no MAN variable
 		is defined, "MAN=${PROG}.1" is assumed.

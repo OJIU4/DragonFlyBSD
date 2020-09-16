@@ -110,10 +110,6 @@ TAILQ_HEAD(ipv4_addrhead, ipv4_addr);
 
 struct ipv4_state {
 	struct ipv4_addrhead addrs;
-
-	/* Buffer for BPF */
-	size_t buffer_size, buffer_len, buffer_pos;
-	char *buffer;
 };
 
 #define IPV4_STATE(ifp)							       \
@@ -133,6 +129,7 @@ bool inet_getroutes(struct dhcpcd_ctx *, rb_tree_t *);
 
 #define STATE_ADDED		0x01
 #define STATE_FAKE		0x02
+#define STATE_EXPIRED		0x04
 
 int ipv4_deladdr(struct ipv4_addr *, int);
 struct ipv4_addr *ipv4_addaddr(struct interface *,

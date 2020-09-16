@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020 François Tigeot
+ * Copyright (c) 2015-2020 François Tigeot <ftigeot@wolfpond.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,6 +27,9 @@
 #ifndef _LINUX_IRQFLAGS_H_
 #define _LINUX_IRQFLAGS_H_
 
+#include <linux/typecheck.h>
+
+#if 0
 /*
  * local_irq_disable/enable functions prevent interrupts to run on the
  * current CPU in critical sections of code.
@@ -34,15 +37,24 @@
  */
 #define local_irq_disable()	crit_enter()
 #define local_irq_enable()	crit_exit()
+#endif
 
-static inline void local_irq_save(unsigned long flags) {}
-static inline void local_irq_restore(unsigned long flags) {}
+static inline void
+local_irq_disable(void)
+{
+	__asm __volatile("cli": : :"memory");
+}
+
+static inline void
+local_irq_enable(void)
+{
+	__asm __volatile("sti": : :"memory");
+}
 
 static inline bool
 irqs_disabled(void)
 {
-	/* Do not prevent drm code from sleeping */
-	return false;
+	return !(read_rflags() & 0x200UL);
 }
 
 #endif	/* _LINUX_IRQFLAGS_H_ */

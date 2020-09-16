@@ -32,6 +32,7 @@
 
 #include <linux/types.h>
 #include <linux/stddef.h>
+#include <linux/poison.h>
 #include <linux/kernel.h>
 
 #include <sys/queue.h>
@@ -74,6 +75,19 @@ static inline int
 list_empty_careful(const struct list_head *head)
 {
 	return (head == head->next) && (head == head->prev);
+}
+
+static inline void
+__list_del(struct list_head *prev, struct list_head *next)
+{
+	next->prev = prev;
+	WRITE_ONCE(prev->next, next);
+}
+
+static inline void
+__list_del_entry(struct list_head *entry)
+{
+	__list_del(entry->prev, entry->next);
 }
 
 static inline void
@@ -133,6 +147,9 @@ list_del_init(struct list_head *entry)
 #define list_next_entry(ptr, member)					\
 	list_entry(((ptr)->member.next), typeof(*(ptr)), member)
 
+#define list_safe_reset_next(ptr, n, member) \
+	(n) = list_next_entry(ptr, member)
+
 #define list_prev_entry(ptr, member)					\
 	list_entry(((ptr)->member.prev), typeof(*(ptr)), member)
 
@@ -172,6 +189,11 @@ list_del_init(struct list_head *entry)
 #define	list_for_each_entry_reverse(p, h, field)			\
 	for (p = list_entry((h)->prev, typeof(*p), field); &p->field != (h); \
 	    p = list_entry(p->field.prev, typeof(*p), field))
+
+#define	list_for_each_entry_safe_reverse(p, n, h, field)		\
+	for (p = list_entry((h)->prev, typeof(*p), field),		\
+	    n = list_entry((p)->field.prev, typeof(*p), field); &(p)->field != (h); \
+	    p = n, n = list_entry(n->field.prev, typeof(*n), field))
 
 #define	list_for_each_prev(p, h) for (p = (h)->prev; p != (h); p = p->prev)
 

@@ -36,6 +36,7 @@
 #include <linux/compiler.h>
 #include <linux/bitops.h>
 #include <linux/log2.h>
+#include <linux/typecheck.h>
 #include <linux/printk.h>
 
 #include <sys/systm.h>
@@ -44,7 +45,11 @@
 #include <sys/stat.h>
 #include <sys/endian.h>
 
+#define U8_MAX		((u8)~0U)
+#define U32_MAX		((u32)~0U)
 #define U64_MAX		((u64)~0ULL)
+
+#include <machine/limits.h>	/* LONG_MAX etc... */
 
 #undef	ALIGN
 #define	ALIGN(x, y)		roundup2((x), (y))
@@ -165,15 +170,18 @@ might_sleep(void)
 {
 }
 
-#define snprintf	ksnprintf
+#define might_sleep_if(cond)
 
-static inline int
+#define snprintf	ksnprintf
+#define sprintf		ksprintf
+
+static inline int __printf(3, 0)
 vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
 	return kvsnprintf(buf, size, fmt, args);
 }
 
-static inline int
+static inline int __printf(3, 0)
 vscnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
 	int ret;
@@ -188,7 +196,7 @@ vscnprintf(char *buf, size_t size, const char *fmt, va_list args)
 	return size - 1;
 }
 
-static inline int
+static inline int __printf(3, 4)
 scnprintf(char *buf, size_t size, const char *fmt, ...)
 {
 	va_list args;
@@ -217,5 +225,17 @@ kstrtol(const char *cp, unsigned int base, long *res)
 }
 
 #define oops_in_progress	(panicstr != NULL)
+
+enum lockdep_ok {
+	LOCKDEP_STILL_OK,
+	LOCKDEP_NOW_UNRELIABLE
+};
+
+#define TAINT_MACHINE_CHECK	4
+
+static inline void
+add_taint(unsigned flag, enum lockdep_ok lo)
+{
+}
 
 #endif	/* _LINUX_KERNEL_H_ */

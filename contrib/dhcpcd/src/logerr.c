@@ -50,6 +50,7 @@
 #define UNUSED(a)		(void)(a)
 
 struct logctx {
+	char		 log_buf[BUFSIZ];
 	unsigned int	 log_opts;
 #ifndef SMALL
 	FILE		*log_file;
@@ -104,7 +105,6 @@ logprintdate(FILE *stream)
 		return -1;
 
 	now = tv.tv_sec;
-	tzset();
 	if (localtime_r(&now, &tmnow) == NULL)
 		return -1;
 	if (strftime(buf, sizeof(buf), "%b %d %T ", &tmnow) == 0)
@@ -238,6 +238,7 @@ vlogerrmessage(int pri, const char *fmt, va_list args)
 
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	logmessage(pri, "%s: %s", buf, strerror(_errno));
+	errno = _errno;
 }
 
 __printflike(2, 3) void
@@ -365,6 +366,11 @@ int
 logopen(const char *path)
 {
 	struct logctx *ctx = &_logctx;
+
+	/* Cache timezone */
+	tzset();
+
+	(void)setvbuf(stderr, ctx->log_buf, _IOLBF, sizeof(ctx->log_buf));
 
 	if (path == NULL) {
 		int opts = 0;

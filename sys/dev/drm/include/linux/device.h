@@ -27,6 +27,7 @@
 #ifndef	_LINUX_DEVICE_H_
 #define	_LINUX_DEVICE_H_
 
+#include <linux/ioport.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
 #include <linux/lockdep.h>
@@ -48,6 +49,8 @@ struct device {
 	device_t	bsddev;
 
 	void		*driver_data;	/* for dev_set and get_drvdata */
+
+	struct dev_pm_info power;
 };
 
 struct device_driver {
@@ -63,11 +66,20 @@ struct device_node;
 #define	dev_warn(dev, fmt, ...)						\
 	device_printf((dev)->bsddev, "warning: " fmt, ## __VA_ARGS__)
 #define	dev_info(dev, fmt, ...)						\
-	device_printf((dev)->bsddev, "info: " fmt, ## __VA_ARGS__)
-#define	dev_printk(level, dev, fmt, ...)				\
-	device_printf((dev)->bsddev, "%s: " fmt, level, ## __VA_ARGS__)
+	device_printf(((struct device *)(dev))->bsddev, "info: " fmt, ## __VA_ARGS__)
 #define dev_notice(dev, fmt, ...)					\
 	device_printf((dev)->bsddev, fmt, ##__VA_ARGS__)
+
+static inline void
+dev_printk(const char *level, const struct device *dev, const char *fmt, ...)
+{
+	__va_list ap;
+
+	device_printf((dev)->bsddev, "%s: ", level);
+	__va_start(ap, fmt);
+	kprintf(fmt, ap);
+	__va_end(ap);
+}
 
 static inline const char *
 dev_name(const struct device *dev)

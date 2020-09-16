@@ -58,11 +58,16 @@ TAILQ_HEAD(pagerlst, vm_object);
 struct buf;
 struct bio;
 
+typedef void pgo_dealloc_t(vm_object_t);
+typedef int pgo_getpage_t(vm_object_t, vm_page_t *, int);
+typedef void pgo_putpages_t(vm_object_t, vm_page_t *, int, int, int *);
+typedef boolean_t pgo_haspage_t(vm_object_t, vm_pindex_t);
+
 struct pagerops {
-	void (*pgo_dealloc) (vm_object_t);
-	int (*pgo_getpage) (vm_object_t, vm_page_t *, int);
-	void (*pgo_putpages) (vm_object_t, vm_page_t *, int, int, int *);
-	boolean_t (*pgo_haspage) (vm_object_t, vm_pindex_t);
+	pgo_dealloc_t	*pgo_dealloc;
+	pgo_getpage_t	*pgo_getpage;
+	pgo_putpages_t	*pgo_putpages;
+	pgo_haspage_t	*pgo_haspage;
 };
 #endif	/* _KERNEL */
 
@@ -81,13 +86,6 @@ struct pagerops {
 #define	VM_PAGER_PEND	3
 #define	VM_PAGER_ERROR	4
 #define VM_PAGER_AGAIN	5
-
-#define	VM_PAGER_PUT_SYNC		0x0001
-#define	VM_PAGER_PUT_INVAL		0x0002
-#define	VM_PAGER_IGNORE_CLEANCHK	0x0004
-#define	VM_PAGER_CLUSTER_OK		0x0008
-#define	VM_PAGER_TRY_TO_CACHE		0x0010
-#define	VM_PAGER_ALLOW_ACTIVE		0x0020
 
 #ifdef _KERNEL
 

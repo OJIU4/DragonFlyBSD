@@ -24,7 +24,7 @@
 .\"
 .\" $FreeBSD: src/share/man/man5/rc.conf.5,v 1.197 2003/07/28 13:56:00 mbr Exp $
 .\"
-.Dd April 16, 2020
+.Dd June 4, 2020
 .Dt RC.CONF 5
 .Os
 .Sh NAME
@@ -324,21 +324,6 @@ The default value is
 i.e., tell
 .Xr dhcpcd 8
 to go to background immediately.
-.It Sy dhcpcd_chrootdir
-.Pq Vt str
-If non-blank and
-.Sy dhcpcd_enable
-is true, run
-.Xr dhcpcd 8
-as the unprivileged user and group
-.Sq _dhcp ,
-.Xr chroot 2 Ns ed
-to
-.Sy dhcpcd_chrootdir .
-.Li \&${dhcpcd_chrootdir} Ns Pa /var/run/log
-will be added to the list of log sockets that
-.Xr syslogd 8
-listens to.
 .It Va pf_enable
 .Pq Vt bool
 Set to
@@ -790,6 +775,8 @@ This will start
 See
 .Xr wpa_supplicant.conf 5
 for configuring authentication information.
+But see also
+.Va wpa_supplicant_enable .
 .Pp
 Finally, you can add
 .Xr ifconfig 8
@@ -1101,6 +1088,23 @@ rules that will be applied by
 .Xr devfsctl 8
 in the order in which they are specified and must include the full path
 to the file.
+.It Va tmpfs_var_run
+.Pq Vt bool
+If set to
+.Dq Li YES ,
+a
+.Xr tmpfs 5
+will be mounted at
+.Pa /var/run .
+Necessary directories under there will be automatically created.
+.It Va tmpfs_tmp
+.Pq Vt bool
+If set to
+.Dq Li YES ,
+a
+.Xr tmpfs 5
+will be mounted at
+.Pa /tmp .
 .It Va syslogd_enable
 .Pq Vt bool
 If set to
@@ -1717,6 +1721,28 @@ is set to
 .Dq Li YES ,
 these are the flags to pass to the
 .Xr rarpd 8
+daemon.
+.It Va wpa_supplicant_enable
+.Pq Vt bool
+If set to
+.Dq Li YES ,
+run the
+.Xr wpa_supplicant 8
+daemon in
+.Dq interface matching mode
+at system boot time.
+.It Va wpa_supplicant_program
+.Pq Vt str
+Path to
+.Xr wpa_supplicant 8 .
+.It Va wpa_supplicant_flags
+.Pq Vt str
+If
+.Va wpa_supplicant_enable
+is set to
+.Dq Li YES ,
+these are the flags to pass to the
+.Xr wpa_supplicant 8
 daemon.
 .It Va bootparamd_enable
 .Pq Vt bool
@@ -2756,6 +2782,7 @@ By default no flags are passed.
 .Xr syslogd 8 ,
 .Xr sysvipcd 8 ,
 .Xr vinum 8 ,
+.Xr wpa_supplicant 8 ,
 .Xr yp 8 ,
 .Xr ypbind 8 ,
 .Xr ypserv 8 ,

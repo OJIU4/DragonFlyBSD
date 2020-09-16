@@ -23,10 +23,9 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * $FreeBSD: head/sys/boot/efi/loader/main.c 295408 2016-02-08 19:34:17Z imp $
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/sys/boot/efi/loader/main.c 295408 2016-02-08 19:34:17Z imp $");
 
 #include <sys/param.h>
 #include <sys/reboot.h>
@@ -138,7 +137,7 @@ has_keyboard(void)
 	 */
 	hin_end = &hin[sz / sizeof(*hin)];
 	for (walker = hin; walker < hin_end; walker++) {
-		status = BS->HandleProtocol(*walker, &devid, (VOID **)&path);
+		status = OpenProtocolByHandle(*walker, &devid, (VOID **)&path);
 		if (EFI_ERROR(status))
 			continue;
 
@@ -318,7 +317,7 @@ main(int argc, CHAR16 *argv[])
 			(devsw[i]->dv_init)();
 
 	/* Get our loaded image protocol interface structure. */
-	BS->HandleProtocol(IH, &imgid, (VOID**)&img);
+	OpenProtocolByHandle(IH, &imgid, (VOID**)&img);
 
 	printf("Command line arguments:");
 	for (i = 0; i < argc; i++) {
@@ -743,7 +742,7 @@ command_efi_show(int argc, char *argv[])
 		case 'v':
 			vflag = 1;
 			if (strlen(optarg) >= nitems(varnamearg)) {
-				printf("Variable %s is longer than %zd characters\n",
+				printf("Variable %s is longer than %zu characters\n",
 				    optarg, nitems(varnamearg));
 				return (CMD_ERROR);
 			}
@@ -783,7 +782,7 @@ command_efi_show(int argc, char *argv[])
 	if (argc == 2) {
 		optarg = argv[0];
 		if (strlen(optarg) >= nitems(varnamearg)) {
-			printf("Variable %s is longer than %zd characters\n",
+			printf("Variable %s is longer than %zu characters\n",
 			    optarg, nitems(varnamearg));
 			pager_close();
 			return (CMD_ERROR);

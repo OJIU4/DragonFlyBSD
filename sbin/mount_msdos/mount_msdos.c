@@ -43,12 +43,11 @@
 #include <ctype.h>
 #include <err.h>
 #include <grp.h>
+#include <libutil.h>
 #include <locale.h>
 #include <mntopts.h>
 #include <pwd.h>
 #include <stdio.h>
-/* must be after stdio to declare fparseln */
-#include <libutil.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
